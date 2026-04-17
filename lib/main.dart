@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:installed_apps/app_info.dart';
 import 'package:installed_apps/installed_apps.dart';
 
+import 'korean_search.dart';
+
 void main() {
   runApp(const EffortlessLauncherApp());
 }
@@ -28,6 +30,48 @@ class EffortlessLauncherApp extends StatelessWidget {
   }
 }
 
+class _IndexedApp {
+  final AppInfo app;
+  final String nameLower;
+  final String chosung;
+  final String qwerty;
+  final String roman;
+
+  _IndexedApp(this.app)
+      : nameLower = app.name.toLowerCase(),
+        chosung = extractChosung(app.name),
+        qwerty = toQwerty(app.name),
+        roman = romanize(app.name);
+}
+
+class _ScoredApp {
+  final _IndexedApp app;
+  final int score;
+  _ScoredApp(this.app, this.score);
+}
+
+int _similarityScore(_IndexedApp a, String qLower, String qRoman, String qQwerty) {
+  if (qRoman.isNotEmpty && a.roman.contains(qRoman)) {
+    final pos = a.roman.indexOf(qRoman);
+    final lenPenalty = (a.roman.length - qRoman.length).clamp(0, 1000);
+    return 10000 - pos * 10 - lenPenalty;
+  }
+  if (qQwerty.isNotEmpty && a.qwerty.contains(qQwerty) && qQwerty != qRoman) {
+    final pos = a.qwerty.indexOf(qQwerty);
+    final lenPenalty = (a.qwerty.length - qQwerty.length).clamp(0, 1000);
+    return 5000 - pos * 10 - lenPenalty;
+  }
+  final lcs = longestCommonSubstring(qRoman, a.roman);
+  if (lcs >= 2) {
+    return 1000 + lcs * 100;
+  }
+  final common = commonCharCount(qRoman, a.roman);
+  if (common >= 1) {
+    return common * 10;
+  }
+  return -1;
+}
+
 class LauncherHome extends StatefulWidget {
   const LauncherHome({super.key});
 
@@ -37,8 +81,9 @@ class LauncherHome extends StatefulWidget {
 
 class _LauncherHomeState extends State<LauncherHome> {
   final TextEditingController _searchController = TextEditingController();
-  List<AppInfo> _apps = [];
-  List<AppInfo> _filteredApps = [];
+  List<_IndexedApp> _apps = [];
+  List<_IndexedApp> _exactResults = [];
+  List<_IndexedApp> _similarResults = [];
   bool _loading = true;
 
   @override
@@ -60,29 +105,68 @@ class _LauncherHomeState extends State<LauncherHome> {
       excludeSystemApps: true,
       withIcon: true,
     );
-    apps.sort((a, b) =>
-        a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    apps.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    final indexed = apps.map((a) => _IndexedApp(a)).toList();
     setState(() {
-      _apps = apps;
-      _filteredApps = apps;
+      _apps = indexed;
+      _exactResults = indexed;
+      _similarResults = [];
       _loading = false;
     });
   }
 
   void _onSearchChanged() {
-    final query = _searchController.text.trim().toLowerCase();
+    final rawQuery = _searchController.text.trim();
+    if (rawQuery.isEmpty) {
+      setState(() {
+        _exactResults = _apps;
+        _similarResults = [];
+      });
+      return;
+    }
+
+    final qLower = rawQuery.toLowerCase();
+    final qQwerty = toQwerty(rawQuery);
+    final qRoman = romanize(rawQuery).toLowerCase();
+    final qIsChosung = isAllChosung(rawQuery);
+
+    final exact = <_IndexedApp>[];
+    final scored = <_ScoredApp>[];
+
+    for (final a in _apps) {
+      final isExact = a.nameLower.contains(qLower) ||
+          (qIsChosung && a.chosung.contains(rawQuery));
+      if (isExact) {
+        exact.add(a);
+        continue;
+      }
+      final score = _similarityScore(a, qLower, qRoman, qQwerty);
+      if (score > 0) {
+        scored.add(_ScoredApp(a, score));
+      }
+    }
+
+    scored.sort((x, y) {
+      if (y.score != x.score) return y.score.compareTo(x.score);
+      return x.app.nameLower.compareTo(y.app.nameLower);
+    });
+
     setState(() {
-      _filteredApps = query.isEmpty
-          ? _apps
-          : _apps
-              .where((app) => app.name.toLowerCase().contains(query))
-              .toList();
+      _exactResults = exact;
+      _similarResults = scored.map((s) => s.app).toList();
     });
   }
 
   void _launchApp(AppInfo app) {
     InstalledApps.startApp(app.packageName);
   }
+
+  SliverGridDelegate get _gridDelegate =>
+      const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 4,
+        mainAxisSpacing: 16,
+        crossAxisSpacing: 8,
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -96,7 +180,7 @@ class _LauncherHomeState extends State<LauncherHome> {
                 controller: _searchController,
                 autofocus: false,
                 decoration: InputDecoration(
-                  hintText: '앱 검색',
+                  hintText: '앱 검색 (초성/한영 혼용 가능)',
                   prefixIcon: const Icon(Icons.search),
                   suffixIcon: _searchController.text.isEmpty
                       ? null
@@ -112,32 +196,76 @@ class _LauncherHomeState extends State<LauncherHome> {
                 ),
               ),
             ),
-            Expanded(
-              child: _loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _filteredApps.isEmpty
-                      ? const Center(child: Text('검색 결과 없음'))
-                      : GridView.builder(
-                          padding: const EdgeInsets.all(16),
-                          gridDelegate:
-                              const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 4,
-                            mainAxisSpacing: 16,
-                            crossAxisSpacing: 8,
-                          ),
-                          itemCount: _filteredApps.length,
-                          itemBuilder: (context, index) {
-                            final app = _filteredApps[index];
-                            return _AppTile(
-                              app: app,
-                              onTap: () => _launchApp(app),
-                            );
-                          },
-                        ),
-            ),
+            Expanded(child: _buildResults()),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildResults() {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_exactResults.isEmpty && _similarResults.isEmpty) {
+      return const Center(child: Text('검색 결과 없음'));
+    }
+
+    return CustomScrollView(
+      slivers: [
+        if (_exactResults.isNotEmpty)
+          SliverPadding(
+            padding: const EdgeInsets.all(16),
+            sliver: SliverGrid(
+              gridDelegate: _gridDelegate,
+              delegate: SliverChildBuilderDelegate(
+                (context, index) {
+                  final a = _exactResults[index];
+                  return _AppTile(
+                    app: a.app,
+                    onTap: () => _launchApp(a.app),
+                  );
+                },
+                childCount: _exactResults.length,
+              ),
+            ),
+          ),
+        if (_similarResults.isNotEmpty) ...[
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+              child: Row(
+                children: [
+                  const Icon(Icons.auto_awesome, size: 16),
+                  const SizedBox(width: 6),
+                  Text(
+                    '유사 결과',
+                    style: Theme.of(context).textTheme.labelLarge,
+                  ),
+                  const SizedBox(width: 8),
+                  const Expanded(child: Divider()),
+                ],
+              ),
+            ),
+          ),
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            sliver: SliverGrid(
+              gridDelegate: _gridDelegate,
+              delegate: SliverChildBuilderDelegate(
+                (context, index) {
+                  final a = _similarResults[index];
+                  return _AppTile(
+                    app: a.app,
+                    onTap: () => _launchApp(a.app),
+                  );
+                },
+                childCount: _similarResults.length,
+              ),
+            ),
+          ),
+        ],
+      ],
     );
   }
 }
