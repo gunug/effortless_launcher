@@ -36,12 +36,14 @@ class _IndexedApp {
   final String chosung;
   final String qwerty;
   final String roman;
+  final String packageLower;
 
   _IndexedApp(this.app)
       : nameLower = app.name.toLowerCase(),
         chosung = extractChosung(app.name),
         qwerty = toQwerty(app.name),
-        roman = romanize(app.name);
+        roman = romanize(app.name),
+        packageLower = app.packageName.toLowerCase();
 }
 
 class _ScoredApp {
@@ -60,6 +62,11 @@ int _similarityScore(_IndexedApp a, String qLower, String qRoman, String qQwerty
     final pos = a.qwerty.indexOf(qQwerty);
     final lenPenalty = (a.qwerty.length - qQwerty.length).clamp(0, 1000);
     return 5000 - pos * 10 - lenPenalty;
+  }
+  final qForPkg = qRoman.isNotEmpty ? qRoman : qLower;
+  if (qForPkg.length >= 2 && a.packageLower.contains(qForPkg)) {
+    final pos = a.packageLower.indexOf(qForPkg);
+    return 3000 - pos * 5;
   }
   final lcs = longestCommonSubstring(qRoman, a.roman);
   if (lcs >= 2) {
@@ -102,7 +109,7 @@ class _LauncherHomeState extends State<LauncherHome> {
 
   Future<void> _loadApps() async {
     final apps = await InstalledApps.getInstalledApps(
-      excludeSystemApps: true,
+      excludeSystemApps: false,
       withIcon: true,
     );
     apps.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
