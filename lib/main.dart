@@ -8,13 +8,20 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app_cache.dart';
 import 'deleted_apps_page.dart';
+import 'hot_zone_page.dart';
 import 'models.dart';
 import 'search_page.dart';
 import 'unused_apps_page.dart';
 
-const String _kLaunchHistoryKey = 'launch_history';
+const String _kLaunchLogKey = 'launch_log_v1';
+const String _kLegacyLaunchHistoryKey = 'launch_history';
 const String _kProtectedKey = 'protected_apps_v1';
+const String _kLastPageKey = 'last_page_index_v1';
 const int _kDeletedRecordTtlMs = 365 * 24 * 60 * 60 * 1000;
+const int _kMaxLaunchesPerApp = 50;
+const int _kHotZonePageIndex = 0;
+const int _kSearchPageIndex = 1;
+const int _kUnusedPageIndex = 2;
 
 void main() {
   runApp(const EffortlessLauncherApp());
@@ -49,11 +56,12 @@ class LauncherHome extends StatefulWidget {
 
 class _LauncherHomeState extends State<LauncherHome>
     with WidgetsBindingObserver {
-  final PageController _pageController = PageController();
+  PageController? _pageController;
+  int _hotZonePageVisits = 0;
   int _unusedPageVisits = 0;
   List<IndexedApp> _apps = [];
   Map<String, Uint8List> _icons = {};
-  Map<String, int> _launchHistory = {};
+  Map<String, List<int>> _launchLog = {};
   List<DeletedApp> _deletedApps = [];
   Set<String> _protectedPackages = {};
   bool _loading = true;
@@ -63,13 +71,13 @@ class _LauncherHomeState extends State<LauncherHome>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _init();
+    _preinit();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _pageController.dispose();
+    _pageController?.dispose();
     super.dispose();
   }
 
@@ -80,8 +88,21 @@ class _LauncherHomeState extends State<LauncherHome>
     }
   }
 
+  Future<void> _preinit() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getInt(_kLastPageKey) ?? _kSearchPageIndex;
+    final initialPage =
+        (saved == _kHotZonePageIndex || saved == _kSearchPageIndex)
+            ? saved
+            : _kSearchPageIndex;
+    _pageController = PageController(initialPage: initialPage);
+    if (!mounted) return;
+    setState(() {});
+    await _init();
+  }
+
   Future<void> _init() async {
-    await _loadLaunchHistory();
+    await _loadLaunchLog();
     await _loadProtected();
     _deletedApps = await AppCache.loadDeletedApps();
     _purgeExpiredDeletedRecords();
@@ -94,21 +115,50 @@ class _LauncherHomeState extends State<LauncherHome>
     }
   }
 
-  Future<void> _loadLaunchHistory() async {
+  Future<void> _loadLaunchLog() async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_kLaunchHistoryKey);
-    if (raw == null || raw.isEmpty) return;
-    try {
-      final decoded = json.decode(raw) as Map<String, dynamic>;
-      _launchHistory = decoded.map((k, v) => MapEntry(k, (v as num).toInt()));
-    } catch (_) {
-      _launchHistory = {};
+    final raw = prefs.getString(_kLaunchLogKey);
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        final decoded = json.decode(raw) as Map<String, dynamic>;
+        _launchLog = decoded.map((k, v) => MapEntry(
+              k,
+              (v as List).map((e) => (e as num).toInt()).toList(),
+            ));
+        return;
+      } catch (_) {
+        _launchLog = {};
+      }
+    }
+    final oldRaw = prefs.getString(_kLegacyLaunchHistoryKey);
+    if (oldRaw != null && oldRaw.isNotEmpty) {
+      try {
+        final decoded = json.decode(oldRaw) as Map<String, dynamic>;
+        _launchLog = decoded.map(
+            (k, v) => MapEntry(k, <int>[(v as num).toInt()]));
+        await _saveLaunchLog();
+      } catch (_) {
+        _launchLog = {};
+      }
     }
   }
 
-  Future<void> _saveLaunchHistory() async {
+  Future<void> _saveLaunchLog() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_kLaunchHistoryKey, json.encode(_launchHistory));
+    await prefs.setString(_kLaunchLogKey, json.encode(_launchLog));
+  }
+
+  Future<void> _saveLastPage(int index) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_kLastPageKey, index);
+  }
+
+  Map<String, int> _deriveLastLaunchMap() {
+    final m = <String, int>{};
+    _launchLog.forEach((k, v) {
+      if (v.isNotEmpty) m[k] = v.first;
+    });
+    return m;
   }
 
   Future<void> _loadProtected() async {
@@ -274,9 +324,14 @@ class _LauncherHomeState extends State<LauncherHome>
   }
 
   Future<void> _launchApp(String packageName) async {
-    _launchHistory[packageName] = DateTime.now().millisecondsSinceEpoch;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final existing = _launchLog.putIfAbsent(packageName, () => <int>[]);
+    existing.insert(0, now);
+    if (existing.length > _kMaxLaunchesPerApp) {
+      _launchLog[packageName] = existing.sublist(0, _kMaxLaunchesPerApp);
+    }
     setState(() {});
-    unawaited(_saveLaunchHistory());
+    unawaited(_saveLaunchLog());
     await InstalledApps.startApp(packageName);
   }
 
@@ -287,6 +342,18 @@ class _LauncherHomeState extends State<LauncherHome>
       await InstalledApps.uninstallApp(pkg);
       await Future<void>.delayed(const Duration(milliseconds: 150));
     }
+  }
+
+  Future<void> _uninstallOne(String packageName) async {
+    await _uninstallApps([packageName]);
+  }
+
+  Future<void> _removeFromRecent(String packageName) async {
+    if (!_launchLog.containsKey(packageName)) return;
+    setState(() {
+      _launchLog.remove(packageName);
+    });
+    await _saveLaunchLog();
   }
 
   Future<void> _toggleProtect(String packageName) async {
@@ -315,27 +382,53 @@ class _LauncherHomeState extends State<LauncherHome>
 
   @override
   Widget build(BuildContext context) {
+    final controller = _pageController;
+    if (controller == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    final lastLaunchMap = _deriveLastLaunchMap();
     return Scaffold(
       body: SafeArea(
         child: PageView(
-          controller: _pageController,
+          controller: controller,
           onPageChanged: (i) {
-            if (i == 1) {
+            if (i == _kHotZonePageIndex || i == _kSearchPageIndex) {
+              unawaited(_saveLastPage(i));
+            }
+            if (i == _kHotZonePageIndex) {
+              setState(() => _hotZonePageVisits++);
+            } else if (i == _kUnusedPageIndex) {
               setState(() => _unusedPageVisits++);
             }
           },
           children: [
+            HotZonePage(
+              apps: _apps,
+              icons: _icons,
+              launchLog: _launchLog,
+              protectedPackages: _protectedPackages,
+              visitCounter: _hotZonePageVisits,
+              loading: _loading,
+              onLaunch: _launchApp,
+              onUninstall: _uninstallOne,
+              onToggleProtect: _toggleProtect,
+              onRemoveFromRecent: _removeFromRecent,
+            ),
             SearchPage(
               apps: _apps,
               icons: _icons,
-              launchHistory: _launchHistory,
+              launchHistory: lastLaunchMap,
+              protectedPackages: _protectedPackages,
               loading: _loading,
               onLaunch: _launchApp,
+              onUninstall: _uninstallOne,
+              onToggleProtect: _toggleProtect,
+              onRemoveFromRecent: _removeFromRecent,
             ),
             UnusedAppsPage(
               apps: _apps,
               icons: _icons,
-              launchHistory: _launchHistory,
+              launchHistory: lastLaunchMap,
               protectedPackages: _protectedPackages,
               visitCounter: _unusedPageVisits,
               loading: _loading,

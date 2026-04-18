@@ -213,8 +213,7 @@ class _UnusedAppsPageState extends State<UnusedAppsPage> {
             children: [
               Expanded(
                 child: Text(
-                  '미사용 앱  $total개'
-                  '${parts.protected.isEmpty ? '' : '  (보호 ${parts.protected.length})'}',
+                  '앱 관리  $total개',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),

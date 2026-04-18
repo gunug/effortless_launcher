@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
+import 'app_context_menu.dart';
 import 'korean_search.dart';
 import 'models.dart';
 
@@ -67,16 +68,24 @@ class SearchPage extends StatefulWidget {
   final List<IndexedApp> apps;
   final Map<String, Uint8List> icons;
   final Map<String, int> launchHistory;
+  final Set<String> protectedPackages;
   final bool loading;
   final Future<void> Function(String packageName) onLaunch;
+  final Future<void> Function(String packageName) onUninstall;
+  final Future<void> Function(String packageName) onToggleProtect;
+  final Future<void> Function(String packageName) onRemoveFromRecent;
 
   const SearchPage({
     super.key,
     required this.apps,
     required this.icons,
     required this.launchHistory,
+    required this.protectedPackages,
     required this.loading,
     required this.onLaunch,
+    required this.onUninstall,
+    required this.onToggleProtect,
+    required this.onRemoveFromRecent,
   });
 
   @override
@@ -178,6 +187,18 @@ class _SearchPageState extends State<SearchPage> {
         crossAxisSpacing: 8,
       );
 
+  Future<void> _showContextMenu(Offset position, IndexedApp app) {
+    return showAppContextMenu(
+      context: context,
+      position: position,
+      packageName: app.packageName,
+      isProtected: widget.protectedPackages.contains(app.packageName),
+      onDelete: widget.onUninstall,
+      onRemoveFromRecent: widget.onRemoveFromRecent,
+      onToggleProtect: widget.onToggleProtect,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -233,7 +254,10 @@ class _SearchPageState extends State<SearchPage> {
                   return AppGridTile(
                     name: a.name,
                     icon: widget.icons[a.packageName],
+                    isProtected:
+                        widget.protectedPackages.contains(a.packageName),
                     onTap: () => widget.onLaunch(a.packageName),
+                    onLongPress: (pos) => _showContextMenu(pos, a),
                   );
                 },
                 childCount: _exactResults.length,
@@ -268,7 +292,10 @@ class _SearchPageState extends State<SearchPage> {
                   return AppGridTile(
                     name: a.name,
                     icon: widget.icons[a.packageName],
+                    isProtected:
+                        widget.protectedPackages.contains(a.packageName),
                     onTap: () => widget.onLaunch(a.packageName),
+                    onLongPress: (pos) => _showContextMenu(pos, a),
                     opacity: 0.8,
                   );
                 },
@@ -282,10 +309,12 @@ class _SearchPageState extends State<SearchPage> {
   }
 }
 
-class AppGridTile extends StatelessWidget {
+class AppGridTile extends StatefulWidget {
   final String name;
   final Uint8List? icon;
+  final bool isProtected;
   final VoidCallback onTap;
+  final void Function(Offset globalPosition)? onLongPress;
   final double opacity;
 
   const AppGridTile({
@@ -293,24 +322,64 @@ class AppGridTile extends StatelessWidget {
     required this.name,
     required this.icon,
     required this.onTap,
+    this.isProtected = false,
+    this.onLongPress,
     this.opacity = 1.0,
   });
 
   @override
+  State<AppGridTile> createState() => _AppGridTileState();
+}
+
+class _AppGridTileState extends State<AppGridTile> {
+  Offset _pressPosition = Offset.zero;
+
+  @override
   Widget build(BuildContext context) {
-    final bytes = icon;
+    final bytes = widget.icon;
+    final iconBox = SizedBox(
+      width: 48,
+      height: 48,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned.fill(
+            child: bytes != null
+                ? Image.memory(bytes, width: 48, height: 48, gaplessPlayback: true)
+                : const Icon(Icons.android, size: 48),
+          ),
+          if (widget.isProtected)
+            Positioned(
+              top: -2,
+              left: -2,
+              child: Container(
+                padding: const EdgeInsets.all(2),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.65),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 0.8),
+                ),
+                child: const Icon(Icons.lock, size: 10, color: Colors.white),
+              ),
+            ),
+        ],
+      ),
+    );
+
     final tile = InkWell(
-      onTap: onTap,
+      onTap: widget.onTap,
+      onTapDown: (d) => _pressPosition = d.globalPosition,
+      onLongPress: widget.onLongPress == null
+          ? null
+          : () => widget.onLongPress!(_pressPosition),
       borderRadius: BorderRadius.circular(12),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          bytes != null
-              ? Image.memory(bytes, width: 48, height: 48, gaplessPlayback: true)
-              : const Icon(Icons.android, size: 48),
+          iconBox,
           const SizedBox(height: 6),
           Text(
-            name,
+            widget.name,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
@@ -319,7 +388,7 @@ class AppGridTile extends StatelessWidget {
         ],
       ),
     );
-    if (opacity >= 1.0) return tile;
-    return Opacity(opacity: opacity, child: tile);
+    if (widget.opacity >= 1.0) return tile;
+    return Opacity(opacity: widget.opacity, child: tile);
   }
 }
