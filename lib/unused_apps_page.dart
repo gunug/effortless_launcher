@@ -9,9 +9,11 @@ class UnusedAppsPage extends StatefulWidget {
   final Map<String, Uint8List> icons;
   final Map<String, int> launchHistory;
   final Set<String> protectedPackages;
+  final int visitCounter;
   final bool loading;
   final Future<void> Function(List<String> packageNames) onUninstallBatch;
   final Future<void> Function(String packageName) onToggleProtect;
+  final Future<void> Function(String packageName) onLaunch;
 
   const UnusedAppsPage({
     super.key,
@@ -19,9 +21,11 @@ class UnusedAppsPage extends StatefulWidget {
     required this.icons,
     required this.launchHistory,
     required this.protectedPackages,
+    required this.visitCounter,
     required this.loading,
     required this.onUninstallBatch,
     required this.onToggleProtect,
+    required this.onLaunch,
   });
 
   @override
@@ -30,6 +34,33 @@ class UnusedAppsPage extends StatefulWidget {
 
 class _UnusedAppsPageState extends State<UnusedAppsPage> {
   final Set<String> _selected = {};
+  late Set<String> _committedProtected;
+
+  @override
+  void initState() {
+    super.initState();
+    _committedProtected = Set.of(widget.protectedPackages);
+  }
+
+  @override
+  void didUpdateWidget(covariant UnusedAppsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.visitCounter != widget.visitCounter) {
+      setState(() {
+        _committedProtected = Set.of(widget.protectedPackages);
+      });
+    }
+    final stale = _selected
+        .where((p) => widget.protectedPackages.contains(p))
+        .toList();
+    if (stale.isNotEmpty) {
+      setState(() {
+        for (final p in stale) {
+          _selected.remove(p);
+        }
+      });
+    }
+  }
 
   int _sortCompare(IndexedApp a, IndexedApp b) {
     final tsA = widget.launchHistory[a.packageName];
@@ -49,7 +80,7 @@ class _UnusedAppsPageState extends State<UnusedAppsPage> {
     final protected = <IndexedApp>[];
     for (final a in widget.apps) {
       if (a.isSystemApp) continue;
-      if (widget.protectedPackages.contains(a.packageName)) {
+      if (_committedProtected.contains(a.packageName)) {
         protected.add(a);
       } else {
         normal.add(a);
@@ -58,21 +89,6 @@ class _UnusedAppsPageState extends State<UnusedAppsPage> {
     normal.sort(_sortCompare);
     protected.sort(_sortCompare);
     return (normal: normal, protected: protected);
-  }
-
-  @override
-  void didUpdateWidget(covariant UnusedAppsPage oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    final stale = _selected
-        .where((p) => widget.protectedPackages.contains(p))
-        .toList();
-    if (stale.isNotEmpty) {
-      setState(() {
-        for (final p in stale) {
-          _selected.remove(p);
-        }
-      });
-    }
   }
 
   String _formatLastUsed(int? ts) {
@@ -117,7 +133,7 @@ class _UnusedAppsPageState extends State<UnusedAppsPage> {
   }
 
   Widget _buildRow(IndexedApp a) {
-    final isProtected = widget.protectedPackages.contains(a.packageName);
+    final isProtectedLive = widget.protectedPackages.contains(a.packageName);
     final ts = widget.launchHistory[a.packageName];
     final icon = widget.icons[a.packageName];
     final checked = _selected.contains(a.packageName);
@@ -126,8 +142,8 @@ class _UnusedAppsPageState extends State<UnusedAppsPage> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Checkbox(
-            value: checked,
-            onChanged: isProtected
+            value: isProtectedLive ? false : checked,
+            onChanged: isProtectedLive
                 ? null
                 : (v) {
                     setState(() {
@@ -159,32 +175,23 @@ class _UnusedAppsPageState extends State<UnusedAppsPage> {
         children: [
           IconButton(
             icon: Icon(
-              isProtected ? Icons.lock : Icons.lock_open_outlined,
-              color: isProtected
+              isProtectedLive ? Icons.lock : Icons.lock_open_outlined,
+              color: isProtectedLive
                   ? Theme.of(context).colorScheme.primary
                   : null,
             ),
-            tooltip: isProtected ? '보호 해제' : '보호',
+            tooltip: isProtectedLive ? '보호 해제' : '보호',
             onPressed: () => widget.onToggleProtect(a.packageName),
           ),
           IconButton(
             icon: const Icon(Icons.delete_outline),
-            tooltip: isProtected ? '보호됨 — 삭제 불가' : '삭제',
-            onPressed: isProtected ? null : () => _deleteOne(a.packageName),
+            tooltip: isProtectedLive ? '보호됨 — 삭제 불가' : '삭제',
+            onPressed:
+                isProtectedLive ? null : () => _deleteOne(a.packageName),
           ),
         ],
       ),
-      onTap: isProtected
-          ? null
-          : () {
-              setState(() {
-                if (checked) {
-                  _selected.remove(a.packageName);
-                } else {
-                  _selected.add(a.packageName);
-                }
-              });
-            },
+      onTap: () => widget.onLaunch(a.packageName),
     );
   }
 

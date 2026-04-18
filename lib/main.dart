@@ -50,6 +50,7 @@ class LauncherHome extends StatefulWidget {
 class _LauncherHomeState extends State<LauncherHome>
     with WidgetsBindingObserver {
   final PageController _pageController = PageController();
+  int _unusedPageVisits = 0;
   List<IndexedApp> _apps = [];
   Map<String, Uint8List> _icons = {};
   Map<String, int> _launchHistory = {};
@@ -318,6 +319,11 @@ class _LauncherHomeState extends State<LauncherHome>
       body: SafeArea(
         child: PageView(
           controller: _pageController,
+          onPageChanged: (i) {
+            if (i == 1) {
+              setState(() => _unusedPageVisits++);
+            }
+          },
           children: [
             SearchPage(
               apps: _apps,
@@ -331,9 +337,11 @@ class _LauncherHomeState extends State<LauncherHome>
               icons: _icons,
               launchHistory: _launchHistory,
               protectedPackages: _protectedPackages,
+              visitCounter: _unusedPageVisits,
               loading: _loading,
               onUninstallBatch: _uninstallApps,
               onToggleProtect: _toggleProtect,
+              onLaunch: _launchApp,
             ),
             DeletedAppsPage(
               deletedApps: _deletedApps,

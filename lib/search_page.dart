@@ -6,7 +6,7 @@ import 'korean_search.dart';
 import 'models.dart';
 
 const int _kMaxResults = 100;
-const int _kMaxRecent = 16;
+const int _kMaxRecent = 28;
 
 class _ScoredApp {
   final IndexedApp app;
