@@ -1,10 +1,16 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:installed_apps/app_info.dart';
 import 'package:installed_apps/installed_apps.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'korean_search.dart';
+
+const int _kMaxResults = 100;
+const int _kMaxRecent = 16;
+const String _kLaunchHistoryKey = 'launch_history';
 
 void main() {
   runApp(const EffortlessLauncherApp());
@@ -113,6 +119,7 @@ class LauncherHome extends StatefulWidget {
 class _LauncherHomeState extends State<LauncherHome> {
   final TextEditingController _searchController = TextEditingController();
   List<_IndexedApp> _apps = [];
+  Map<String, int> _launchHistory = {};
   List<_IndexedApp> _exactResults = [];
   List<_IndexedApp> _similarResults = [];
   bool _loading = true;
@@ -120,7 +127,7 @@ class _LauncherHomeState extends State<LauncherHome> {
   @override
   void initState() {
     super.initState();
-    _loadApps();
+    _init();
     _searchController.addListener(_onSearchChanged);
   }
 
@@ -129,6 +136,28 @@ class _LauncherHomeState extends State<LauncherHome> {
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     super.dispose();
+  }
+
+  Future<void> _init() async {
+    await _loadLaunchHistory();
+    await _loadApps();
+  }
+
+  Future<void> _loadLaunchHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_kLaunchHistoryKey);
+    if (raw == null || raw.isEmpty) return;
+    try {
+      final decoded = json.decode(raw) as Map<String, dynamic>;
+      _launchHistory = decoded.map((k, v) => MapEntry(k, (v as num).toInt()));
+    } catch (_) {
+      _launchHistory = {};
+    }
+  }
+
+  Future<void> _saveLaunchHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kLaunchHistoryKey, json.encode(_launchHistory));
   }
 
   Future<void> _loadApps() async {
@@ -140,17 +169,29 @@ class _LauncherHomeState extends State<LauncherHome> {
     final indexed = apps.map((a) => _IndexedApp(a)).toList();
     setState(() {
       _apps = indexed;
-      _exactResults = indexed;
+      _exactResults = _recentApps();
       _similarResults = [];
       _loading = false;
     });
+  }
+
+  List<_IndexedApp> _recentApps() {
+    if (_launchHistory.isEmpty) return const [];
+    final withTs = <MapEntry<int, _IndexedApp>>[];
+    for (final a in _apps) {
+      final ts = _launchHistory[a.app.packageName];
+      if (ts != null) withTs.add(MapEntry(ts, a));
+    }
+    withTs.sort((x, y) => y.key.compareTo(x.key));
+    final take = withTs.length < _kMaxRecent ? withTs.length : _kMaxRecent;
+    return withTs.take(take).map((e) => e.value).toList();
   }
 
   void _onSearchChanged() {
     final rawQuery = _searchController.text.trim();
     if (rawQuery.isEmpty) {
       setState(() {
-        _exactResults = _apps;
+        _exactResults = _recentApps();
         _similarResults = [];
       });
       return;
@@ -182,14 +223,26 @@ class _LauncherHomeState extends State<LauncherHome> {
       return x.app.nameLower.compareTo(y.app.nameLower);
     });
 
+    final exactCapped =
+        exact.length > _kMaxResults ? exact.sublist(0, _kMaxResults) : exact;
+    final remaining = _kMaxResults - exactCapped.length;
+    final similarCapped = remaining <= 0
+        ? <_IndexedApp>[]
+        : scored
+            .take(remaining)
+            .map((s) => s.app)
+            .toList();
+
     setState(() {
-      _exactResults = exact;
-      _similarResults = scored.map((s) => s.app).toList();
+      _exactResults = exactCapped;
+      _similarResults = similarCapped;
     });
   }
 
-  void _launchApp(AppInfo app) {
-    InstalledApps.startApp(app.packageName);
+  Future<void> _launchApp(AppInfo app) async {
+    _launchHistory[app.packageName] = DateTime.now().millisecondsSinceEpoch;
+    await _saveLaunchHistory();
+    await InstalledApps.startApp(app.packageName);
   }
 
   SliverGridDelegate get _gridDelegate =>
@@ -239,7 +292,10 @@ class _LauncherHomeState extends State<LauncherHome> {
       return const Center(child: CircularProgressIndicator());
     }
     if (_exactResults.isEmpty && _similarResults.isEmpty) {
-      return const Center(child: Text('검색 결과 없음'));
+      final isSearching = _searchController.text.trim().isNotEmpty;
+      return Center(
+        child: Text(isSearching ? '검색 결과 없음' : '앱을 실행하면 최근 사용에 추가됩니다'),
+      );
     }
 
     return CustomScrollView(
@@ -289,6 +345,7 @@ class _LauncherHomeState extends State<LauncherHome> {
                   return _AppTile(
                     app: a.app,
                     onTap: () => _launchApp(a.app),
+                    opacity: 0.8,
                   );
                 },
                 childCount: _similarResults.length,
@@ -304,13 +361,14 @@ class _LauncherHomeState extends State<LauncherHome> {
 class _AppTile extends StatelessWidget {
   final AppInfo app;
   final VoidCallback onTap;
+  final double opacity;
 
-  const _AppTile({required this.app, required this.onTap});
+  const _AppTile({required this.app, required this.onTap, this.opacity = 1.0});
 
   @override
   Widget build(BuildContext context) {
     final Uint8List? icon = app.icon;
-    return InkWell(
+    final tile = InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
       child: Column(
@@ -330,5 +388,7 @@ class _AppTile extends StatelessWidget {
         ],
       ),
     );
+    if (opacity >= 1.0) return tile;
+    return Opacity(opacity: opacity, child: tile);
   }
 }
