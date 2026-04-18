@@ -114,6 +114,105 @@ int longestCommonSubstring(String a, String b) {
   return best;
 }
 
+int editDistance(String a, String b) {
+  if (a.isEmpty) return b.length;
+  if (b.isEmpty) return a.length;
+  final n = a.length;
+  final m = b.length;
+  var prev = List<int>.generate(m + 1, (i) => i);
+  final curr = List<int>.filled(m + 1, 0);
+  for (var i = 1; i <= n; i++) {
+    curr[0] = i;
+    for (var j = 1; j <= m; j++) {
+      final cost = a[i - 1] == b[j - 1] ? 0 : 1;
+      final del = prev[j] + 1;
+      final ins = curr[j - 1] + 1;
+      final sub = prev[j - 1] + cost;
+      var min = del < ins ? del : ins;
+      if (sub < min) min = sub;
+      curr[j] = min;
+    }
+    for (var k = 0; k <= m; k++) {
+      prev[k] = curr[k];
+    }
+  }
+  return prev[m];
+}
+
+int minEditDistanceWindow(String pattern, String text) {
+  if (pattern.isEmpty) return 0;
+  final n = pattern.length;
+  if (text.length < n - 1) return n;
+  var best = n;
+  final sizes = [n - 1, n, n + 1];
+  for (final size in sizes) {
+    if (size <= 0 || size > text.length) continue;
+    for (var i = 0; i <= text.length - size; i++) {
+      final d = editDistance(pattern, text.substring(i, i + size));
+      if (d < best) best = d;
+      if (best == 0) return 0;
+    }
+  }
+  return best;
+}
+
+bool isSubsequence(String pattern, String text) {
+  if (pattern.isEmpty) return true;
+  var i = 0;
+  for (var j = 0; j < text.length && i < pattern.length; j++) {
+    if (text[j] == pattern[i]) i++;
+  }
+  return i == pattern.length;
+}
+
+int subsequenceSpread(String pattern, String text) {
+  if (pattern.isEmpty) return 0;
+  var first = -1;
+  var last = -1;
+  var i = 0;
+  for (var j = 0; j < text.length && i < pattern.length; j++) {
+    if (text[j] == pattern[i]) {
+      if (first == -1) first = j;
+      last = j;
+      i++;
+    }
+  }
+  if (first < 0 || i < pattern.length) return text.length;
+  return last - first;
+}
+
+String extractInitials(String name) {
+  final sb = StringBuffer();
+  for (var i = 0; i < name.length; i++) {
+    final c = name[i];
+    final isLetter = (c.codeUnitAt(0) >= 0x41 && c.codeUnitAt(0) <= 0x5A) ||
+        (c.codeUnitAt(0) >= 0x61 && c.codeUnitAt(0) <= 0x7A);
+    if (!isLetter) continue;
+    if (i == 0) {
+      sb.write(c.toLowerCase());
+      continue;
+    }
+    final prev = name[i - 1];
+    final isWordStart = prev == ' ' || prev == '\t' || prev == '-' || prev == '_' || prev == '.';
+    final prevLower = prev.toLowerCase() == prev && prev.toUpperCase() != prev;
+    final cUpper = c.toUpperCase() == c && c.toLowerCase() != c;
+    if (isWordStart || (prevLower && cUpper)) {
+      sb.write(c.toLowerCase());
+    }
+  }
+  return sb.toString();
+}
+
+int wordBoundaryBonusAt(String haystack, int pos) {
+  if (pos == 0) return 1000;
+  if (pos < 0 || pos >= haystack.length) return 0;
+  final prev = haystack[pos - 1];
+  if (prev == ' ' || prev == '\t' || prev == '-' || prev == '_' || prev == '.') {
+    return 500;
+  }
+  return 0;
+}
+
 int commonCharCount(String a, String b) {
   if (a.isEmpty || b.isEmpty) return 0;
   final setA = <String>{};

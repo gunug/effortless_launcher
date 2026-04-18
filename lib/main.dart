@@ -37,13 +37,15 @@ class _IndexedApp {
   final String qwerty;
   final String roman;
   final String packageLower;
+  final String initials;
 
   _IndexedApp(this.app)
       : nameLower = app.name.toLowerCase(),
         chosung = extractChosung(app.name),
         qwerty = toQwerty(app.name),
         roman = romanize(app.name),
-        packageLower = app.packageName.toLowerCase();
+        packageLower = app.packageName.toLowerCase(),
+        initials = extractInitials(app.name);
 }
 
 class _ScoredApp {
@@ -56,21 +58,43 @@ int _similarityScore(_IndexedApp a, String qLower, String qRoman, String qQwerty
   if (qRoman.isNotEmpty && a.roman.contains(qRoman)) {
     final pos = a.roman.indexOf(qRoman);
     final lenPenalty = (a.roman.length - qRoman.length).clamp(0, 1000);
-    return 10000 - pos * 10 - lenPenalty;
+    final bonus = wordBoundaryBonusAt(a.roman, pos);
+    return 10000 - pos * 10 - lenPenalty + bonus;
   }
   if (qQwerty.isNotEmpty && a.qwerty.contains(qQwerty) && qQwerty != qRoman) {
     final pos = a.qwerty.indexOf(qQwerty);
     final lenPenalty = (a.qwerty.length - qQwerty.length).clamp(0, 1000);
-    return 5000 - pos * 10 - lenPenalty;
+    final bonus = wordBoundaryBonusAt(a.qwerty, pos);
+    return 5000 - pos * 10 - lenPenalty + bonus;
+  }
+  if (qRoman.length >= 3) {
+    final maxEdit = qRoman.length <= 4
+        ? 1
+        : qRoman.length <= 6
+            ? 2
+            : (qRoman.length * 0.3).floor();
+    final edit = minEditDistanceWindow(qRoman, a.roman);
+    if (edit > 0 && edit <= maxEdit) {
+      return 4000 - edit * 500;
+    }
   }
   final qForPkg = qRoman.isNotEmpty ? qRoman : qLower;
   if (qForPkg.length >= 2 && a.packageLower.contains(qForPkg)) {
     final pos = a.packageLower.indexOf(qForPkg);
     return 3000 - pos * 5;
   }
+  if (qLower.length >= 2 && a.initials.isNotEmpty && a.initials.contains(qLower)) {
+    final pos = a.initials.indexOf(qLower);
+    return 2500 - pos * 50;
+  }
   final lcs = longestCommonSubstring(qRoman, a.roman);
   if (lcs >= 2) {
     return 1000 + lcs * 100;
+  }
+  if (qRoman.length >= 3 && isSubsequence(qRoman, a.roman)) {
+    final spread = subsequenceSpread(qRoman, a.roman);
+    final tightness = (200 - spread).clamp(0, 200);
+    return 500 + tightness;
   }
   final common = commonCharCount(qRoman, a.roman);
   if (common >= 1) {
