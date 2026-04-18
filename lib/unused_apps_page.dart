@@ -8,16 +8,20 @@ class UnusedAppsPage extends StatefulWidget {
   final List<IndexedApp> apps;
   final Map<String, Uint8List> icons;
   final Map<String, int> launchHistory;
+  final Set<String> protectedPackages;
   final bool loading;
   final Future<void> Function(List<String> packageNames) onUninstallBatch;
+  final Future<void> Function(String packageName) onToggleProtect;
 
   const UnusedAppsPage({
     super.key,
     required this.apps,
     required this.icons,
     required this.launchHistory,
+    required this.protectedPackages,
     required this.loading,
     required this.onUninstallBatch,
+    required this.onToggleProtect,
   });
 
   @override
@@ -27,21 +31,48 @@ class UnusedAppsPage extends StatefulWidget {
 class _UnusedAppsPageState extends State<UnusedAppsPage> {
   final Set<String> _selected = {};
 
-  List<IndexedApp> _buildList() {
-    final list = widget.apps.where((a) => !a.isSystemApp).toList();
-    list.sort((a, b) {
-      final tsA = widget.launchHistory[a.packageName];
-      final tsB = widget.launchHistory[b.packageName];
-      final aNever = tsA == null;
-      final bNever = tsB == null;
-      if (aNever && bNever) {
-        return a.nameLower.compareTo(b.nameLower);
+  int _sortCompare(IndexedApp a, IndexedApp b) {
+    final tsA = widget.launchHistory[a.packageName];
+    final tsB = widget.launchHistory[b.packageName];
+    final aNever = tsA == null;
+    final bNever = tsB == null;
+    if (aNever && bNever) {
+      return a.nameLower.compareTo(b.nameLower);
+    }
+    if (aNever) return -1;
+    if (bNever) return 1;
+    return tsA.compareTo(tsB);
+  }
+
+  ({List<IndexedApp> normal, List<IndexedApp> protected}) _partition() {
+    final normal = <IndexedApp>[];
+    final protected = <IndexedApp>[];
+    for (final a in widget.apps) {
+      if (a.isSystemApp) continue;
+      if (widget.protectedPackages.contains(a.packageName)) {
+        protected.add(a);
+      } else {
+        normal.add(a);
       }
-      if (aNever) return -1;
-      if (bNever) return 1;
-      return tsA.compareTo(tsB);
-    });
-    return list;
+    }
+    normal.sort(_sortCompare);
+    protected.sort(_sortCompare);
+    return (normal: normal, protected: protected);
+  }
+
+  @override
+  void didUpdateWidget(covariant UnusedAppsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final stale = _selected
+        .where((p) => widget.protectedPackages.contains(p))
+        .toList();
+    if (stale.isNotEmpty) {
+      setState(() {
+        for (final p in stale) {
+          _selected.remove(p);
+        }
+      });
+    }
   }
 
   String _formatLastUsed(int? ts) {
@@ -85,13 +116,86 @@ class _UnusedAppsPageState extends State<UnusedAppsPage> {
     setState(() => _selected.remove(packageName));
   }
 
+  Widget _buildRow(IndexedApp a) {
+    final isProtected = widget.protectedPackages.contains(a.packageName);
+    final ts = widget.launchHistory[a.packageName];
+    final icon = widget.icons[a.packageName];
+    final checked = _selected.contains(a.packageName);
+    return ListTile(
+      leading: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Checkbox(
+            value: checked,
+            onChanged: isProtected
+                ? null
+                : (v) {
+                    setState(() {
+                      if (v == true) {
+                        _selected.add(a.packageName);
+                      } else {
+                        _selected.remove(a.packageName);
+                      }
+                    });
+                  },
+          ),
+          icon != null
+              ? Image.memory(icon,
+                  width: 40, height: 40, gaplessPlayback: true)
+              : const Icon(Icons.android, size: 40),
+        ],
+      ),
+      title: Text(
+        a.name,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      subtitle: Text(
+        _formatLastUsed(ts),
+        style: Theme.of(context).textTheme.bodySmall,
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            icon: Icon(
+              isProtected ? Icons.lock : Icons.lock_open_outlined,
+              color: isProtected
+                  ? Theme.of(context).colorScheme.primary
+                  : null,
+            ),
+            tooltip: isProtected ? '보호 해제' : '보호',
+            onPressed: () => widget.onToggleProtect(a.packageName),
+          ),
+          IconButton(
+            icon: const Icon(Icons.delete_outline),
+            tooltip: isProtected ? '보호됨 — 삭제 불가' : '삭제',
+            onPressed: isProtected ? null : () => _deleteOne(a.packageName),
+          ),
+        ],
+      ),
+      onTap: isProtected
+          ? null
+          : () {
+              setState(() {
+                if (checked) {
+                  _selected.remove(a.packageName);
+                } else {
+                  _selected.add(a.packageName);
+                }
+              });
+            },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (widget.loading) {
       return const Center(child: CircularProgressIndicator());
     }
-    final apps = _buildList();
-    if (apps.isEmpty) {
+    final parts = _partition();
+    final total = parts.normal.length + parts.protected.length;
+    if (total == 0) {
       return const Center(child: Text('정리할 앱 없음'));
     }
     return Column(
@@ -102,7 +206,8 @@ class _UnusedAppsPageState extends State<UnusedAppsPage> {
             children: [
               Expanded(
                 child: Text(
-                  '미사용 앱  ${apps.length}개',
+                  '미사용 앱  $total개'
+                  '${parts.protected.isEmpty ? '' : '  (보호 ${parts.protected.length})'}',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
@@ -122,58 +227,31 @@ class _UnusedAppsPageState extends State<UnusedAppsPage> {
         const Divider(height: 1),
         Expanded(
           child: ListView.builder(
-            itemCount: apps.length,
+            itemCount: parts.normal.length +
+                (parts.protected.isEmpty ? 0 : 1 + parts.protected.length),
             itemBuilder: (context, index) {
-              final a = apps[index];
-              final ts = widget.launchHistory[a.packageName];
-              final icon = widget.icons[a.packageName];
-              final checked = _selected.contains(a.packageName);
-              return ListTile(
-                leading: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Checkbox(
-                      value: checked,
-                      onChanged: (v) {
-                        setState(() {
-                          if (v == true) {
-                            _selected.add(a.packageName);
-                          } else {
-                            _selected.remove(a.packageName);
-                          }
-                        });
-                      },
-                    ),
-                    icon != null
-                        ? Image.memory(icon,
-                            width: 40, height: 40, gaplessPlayback: true)
-                        : const Icon(Icons.android, size: 40),
-                  ],
-                ),
-                title: Text(
-                  a.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                subtitle: Text(
-                  _formatLastUsed(ts),
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                trailing: IconButton(
-                  icon: const Icon(Icons.delete_outline),
-                  tooltip: '삭제',
-                  onPressed: () => _deleteOne(a.packageName),
-                ),
-                onTap: () {
-                  setState(() {
-                    if (checked) {
-                      _selected.remove(a.packageName);
-                    } else {
-                      _selected.add(a.packageName);
-                    }
-                  });
-                },
-              );
+              if (index < parts.normal.length) {
+                return _buildRow(parts.normal[index]);
+              }
+              final afterNormal = index - parts.normal.length;
+              if (afterNormal == 0) {
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.lock, size: 16),
+                      const SizedBox(width: 6),
+                      Text(
+                        '보호됨  ${parts.protected.length}개',
+                        style: Theme.of(context).textTheme.labelLarge,
+                      ),
+                      const SizedBox(width: 8),
+                      const Expanded(child: Divider()),
+                    ],
+                  ),
+                );
+              }
+              return _buildRow(parts.protected[afterNormal - 1]);
             },
           ),
         ),
