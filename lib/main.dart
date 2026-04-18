@@ -7,10 +7,11 @@ import 'package:installed_apps/installed_apps.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app_cache.dart';
-import 'korean_search.dart';
+import 'deleted_apps_page.dart';
+import 'models.dart';
+import 'search_page.dart';
+import 'unused_apps_page.dart';
 
-const int _kMaxResults = 100;
-const int _kMaxRecent = 16;
 const String _kLaunchHistoryKey = 'launch_history';
 
 void main() {
@@ -37,80 +38,6 @@ class EffortlessLauncherApp extends StatelessWidget {
   }
 }
 
-class _IndexedApp {
-  final String name;
-  final String packageName;
-  final String nameLower;
-  final String chosung;
-  final String qwerty;
-  final String roman;
-  final String packageLower;
-  final String initials;
-
-  _IndexedApp({required this.name, required this.packageName})
-      : nameLower = name.toLowerCase(),
-        chosung = extractChosung(name),
-        qwerty = toQwerty(name),
-        roman = romanize(name),
-        packageLower = packageName.toLowerCase(),
-        initials = extractInitials(name);
-}
-
-class _ScoredApp {
-  final _IndexedApp app;
-  final int score;
-  _ScoredApp(this.app, this.score);
-}
-
-int _similarityScore(_IndexedApp a, String qLower, String qRoman, String qQwerty) {
-  if (qRoman.isNotEmpty && a.roman.contains(qRoman)) {
-    final pos = a.roman.indexOf(qRoman);
-    final lenPenalty = (a.roman.length - qRoman.length).clamp(0, 1000);
-    final bonus = wordBoundaryBonusAt(a.roman, pos);
-    return 10000 - pos * 10 - lenPenalty + bonus;
-  }
-  if (qQwerty.isNotEmpty && a.qwerty.contains(qQwerty) && qQwerty != qRoman) {
-    final pos = a.qwerty.indexOf(qQwerty);
-    final lenPenalty = (a.qwerty.length - qQwerty.length).clamp(0, 1000);
-    final bonus = wordBoundaryBonusAt(a.qwerty, pos);
-    return 5000 - pos * 10 - lenPenalty + bonus;
-  }
-  if (qRoman.length >= 3) {
-    final maxEdit = qRoman.length <= 4
-        ? 1
-        : qRoman.length <= 6
-            ? 2
-            : (qRoman.length * 0.3).floor();
-    final edit = minEditDistanceWindow(qRoman, a.roman);
-    if (edit > 0 && edit <= maxEdit) {
-      return 4000 - edit * 500;
-    }
-  }
-  final qForPkg = qRoman.isNotEmpty ? qRoman : qLower;
-  if (qForPkg.length >= 2 && a.packageLower.contains(qForPkg)) {
-    final pos = a.packageLower.indexOf(qForPkg);
-    return 3000 - pos * 5;
-  }
-  if (qLower.length >= 2 && a.initials.isNotEmpty && a.initials.contains(qLower)) {
-    final pos = a.initials.indexOf(qLower);
-    return 2500 - pos * 50;
-  }
-  final lcs = longestCommonSubstring(qRoman, a.roman);
-  if (lcs >= 2) {
-    return 1000 + lcs * 100;
-  }
-  if (qRoman.length >= 3 && isSubsequence(qRoman, a.roman)) {
-    final spread = subsequenceSpread(qRoman, a.roman);
-    final tightness = (200 - spread).clamp(0, 200);
-    return 500 + tightness;
-  }
-  final common = commonCharCount(qRoman, a.roman);
-  if (common >= 1) {
-    return common * 10;
-  }
-  return -1;
-}
-
 class LauncherHome extends StatefulWidget {
   const LauncherHome({super.key});
 
@@ -118,37 +45,46 @@ class LauncherHome extends StatefulWidget {
   State<LauncherHome> createState() => _LauncherHomeState();
 }
 
-class _LauncherHomeState extends State<LauncherHome> {
-  final TextEditingController _searchController = TextEditingController();
-  List<_IndexedApp> _apps = [];
+class _LauncherHomeState extends State<LauncherHome>
+    with WidgetsBindingObserver {
+  final PageController _pageController = PageController();
+  List<IndexedApp> _apps = [];
   Map<String, Uint8List> _icons = {};
   Map<String, int> _launchHistory = {};
-  List<_IndexedApp> _exactResults = [];
-  List<_IndexedApp> _similarResults = [];
+  List<DeletedApp> _deletedApps = [];
   bool _loading = true;
+  bool _refreshing = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _init();
-    _searchController.addListener(_onSearchChanged);
   }
 
   @override
   void dispose() {
-    _searchController.removeListener(_onSearchChanged);
-    _searchController.dispose();
+    WidgetsBinding.instance.removeObserver(this);
+    _pageController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_refreshWithDiff());
+    }
   }
 
   Future<void> _init() async {
     await _loadLaunchHistory();
+    _deletedApps = await AppCache.loadDeletedApps();
     final cacheHit = await _loadFromCache();
     if (cacheHit) {
-      _refreshInBackground();
+      unawaited(_refreshWithDiff());
     } else {
       await _loadMetadataOnly();
-      unawaited(_loadIconsAndRefresh());
+      unawaited(_refreshWithDiff());
     }
   }
 
@@ -173,17 +109,22 @@ class _LauncherHomeState extends State<LauncherHome> {
     final meta = await AppCache.loadMeta();
     if (meta == null || meta.isEmpty) return false;
     final indexed = meta
-        .map((m) => _IndexedApp(name: m.name, packageName: m.packageName))
+        .map((m) => IndexedApp(
+              name: m.name,
+              packageName: m.packageName,
+              isSystemApp: m.isSystemApp,
+            ))
         .toList()
       ..sort((a, b) => a.nameLower.compareTo(b.nameLower));
-    final icons = await AppCache.loadIcons(meta.map((m) => m.packageName));
+    final icons = await AppCache.loadIcons([
+      ...meta.map((m) => m.packageName),
+      ..._deletedApps.map((d) => d.packageName),
+    ]);
     if (!mounted) return true;
     setState(() {
       _apps = indexed;
       _icons = icons;
       _loading = false;
-      _exactResults = _recentApps();
-      _similarResults = [];
     });
     return true;
   }
@@ -195,288 +136,163 @@ class _LauncherHomeState extends State<LauncherHome> {
     );
     apps.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     final indexed = apps
-        .map((a) => _IndexedApp(name: a.name, packageName: a.packageName))
+        .map((a) => IndexedApp(
+              name: a.name,
+              packageName: a.packageName,
+              isSystemApp: a.isSystemApp,
+            ))
         .toList();
     if (!mounted) return;
     setState(() {
       _apps = indexed;
       _loading = false;
-      _exactResults = _recentApps();
-      _similarResults = [];
     });
-    unawaited(AppCache.saveMeta(
-      apps.map((a) => CachedAppMeta(a.packageName, a.name)).toList(),
-    ));
+    unawaited(AppCache.saveMeta(apps
+        .map((a) => CachedAppMeta(a.packageName, a.name,
+            isSystemApp: a.isSystemApp))
+        .toList()));
   }
 
-  Future<void> _refreshInBackground() async {
-    await _loadIconsAndRefresh();
-  }
+  Future<void> _refreshWithDiff() async {
+    if (_refreshing) return;
+    _refreshing = true;
+    try {
+      final freshApps = await InstalledApps.getInstalledApps(
+        excludeSystemApps: false,
+        withIcon: true,
+      );
+      freshApps
+          .sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
 
-  Future<void> _loadIconsAndRefresh() async {
-    final appsWithIcons = await InstalledApps.getInstalledApps(
-      excludeSystemApps: false,
-      withIcon: true,
-    );
-    appsWithIcons.sort((a, b) =>
-        a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-    final icons = <String, Uint8List>{};
-    for (final a in appsWithIcons) {
-      if (a.icon != null) icons[a.packageName] = a.icon!;
-    }
-    final indexed = appsWithIcons
-        .map((a) => _IndexedApp(name: a.name, packageName: a.packageName))
-        .toList();
-    if (!mounted) return;
-    setState(() {
-      _apps = indexed;
-      _icons = icons;
-    });
-    _reapplyQuery();
-    unawaited(AppCache.saveMeta(
-      appsWithIcons
-          .map((a) => CachedAppMeta(a.packageName, a.name))
-          .toList(),
-    ));
-    unawaited(AppCache.saveIcons(icons));
-    unawaited(AppCache.clearObsolete(icons.keys.toSet()));
-  }
+      final previousPkgs = _apps.map((a) => a.packageName).toSet();
+      final currentPkgs = freshApps.map((a) => a.packageName).toSet();
+      final newlyDeleted = previousPkgs.difference(currentPkgs);
 
-  List<_IndexedApp> _recentApps() {
-    if (_launchHistory.isEmpty) return const [];
-    final withTs = <MapEntry<int, _IndexedApp>>[];
-    for (final a in _apps) {
-      final ts = _launchHistory[a.packageName];
-      if (ts != null) withTs.add(MapEntry(ts, a));
-    }
-    withTs.sort((x, y) => y.key.compareTo(x.key));
-    final take = withTs.length < _kMaxRecent ? withTs.length : _kMaxRecent;
-    return withTs.take(take).map((e) => e.value).toList();
-  }
-
-  void _reapplyQuery() {
-    if (_searchController.text.trim().isEmpty) {
-      setState(() {
-        _exactResults = _recentApps();
-        _similarResults = [];
-      });
-    } else {
-      _onSearchChanged();
-    }
-  }
-
-  void _onSearchChanged() {
-    final rawQuery = _searchController.text.trim();
-    if (rawQuery.isEmpty) {
-      setState(() {
-        _exactResults = _recentApps();
-        _similarResults = [];
-      });
-      return;
-    }
-
-    final qLower = rawQuery.toLowerCase();
-    final qQwerty = toQwerty(rawQuery);
-    final qRoman = romanize(rawQuery).toLowerCase();
-    final qIsChosung = isAllChosung(rawQuery);
-
-    final exact = <_IndexedApp>[];
-    final scored = <_ScoredApp>[];
-
-    for (final a in _apps) {
-      final isExact = a.nameLower.contains(qLower) ||
-          (qIsChosung && a.chosung.contains(rawQuery));
-      if (isExact) {
-        exact.add(a);
-        continue;
+      if (newlyDeleted.isNotEmpty && _apps.isNotEmpty) {
+        final now = DateTime.now().millisecondsSinceEpoch;
+        final oldByPkg = {for (final a in _apps) a.packageName: a};
+        for (final pkg in newlyDeleted) {
+          final already =
+              _deletedApps.any((d) => d.packageName == pkg);
+          if (already) continue;
+          final old = oldByPkg[pkg];
+          if (old == null) continue;
+          _deletedApps.add(DeletedApp(
+            name: old.name,
+            packageName: pkg,
+            confirmedAt: now,
+          ));
+        }
       }
-      final score = _similarityScore(a, qLower, qRoman, qQwerty);
-      if (score > 0) {
-        scored.add(_ScoredApp(a, score));
+
+      final reinstalledCount = _deletedApps.length;
+      _deletedApps = _deletedApps
+          .where((d) => !currentPkgs.contains(d.packageName))
+          .toList();
+      final reinstalledRemoved = reinstalledCount - _deletedApps.length;
+
+      final indexed = freshApps
+          .map((a) => IndexedApp(
+                name: a.name,
+                packageName: a.packageName,
+                isSystemApp: a.isSystemApp,
+              ))
+          .toList();
+      final icons = <String, Uint8List>{};
+      for (final a in freshApps) {
+        if (a.icon != null) icons[a.packageName] = a.icon!;
       }
+      for (final d in _deletedApps) {
+        final preserved = _icons[d.packageName];
+        if (preserved != null) {
+          icons[d.packageName] = preserved;
+        }
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _apps = indexed;
+        _icons = icons;
+        _loading = false;
+      });
+
+      unawaited(AppCache.saveMeta(freshApps
+          .map((a) => CachedAppMeta(a.packageName, a.name,
+              isSystemApp: a.isSystemApp))
+          .toList()));
+      unawaited(AppCache.saveIcons(icons));
+      unawaited(AppCache.saveDeletedApps(_deletedApps));
+      final keepIcons = {
+        ...currentPkgs,
+        ..._deletedApps.map((d) => d.packageName),
+      };
+      unawaited(AppCache.clearObsolete(keepIcons));
+
+      if (newlyDeleted.isNotEmpty || reinstalledRemoved > 0) {
+        debugPrint(
+            'Refresh: ${newlyDeleted.length} newly deleted, $reinstalledRemoved reinstalled');
+      }
+    } finally {
+      _refreshing = false;
     }
-
-    scored.sort((x, y) {
-      if (y.score != x.score) return y.score.compareTo(x.score);
-      return x.app.nameLower.compareTo(y.app.nameLower);
-    });
-
-    final exactCapped =
-        exact.length > _kMaxResults ? exact.sublist(0, _kMaxResults) : exact;
-    final remaining = _kMaxResults - exactCapped.length;
-    final similarCapped = remaining <= 0
-        ? <_IndexedApp>[]
-        : scored.take(remaining).map((s) => s.app).toList();
-
-    setState(() {
-      _exactResults = exactCapped;
-      _similarResults = similarCapped;
-    });
   }
 
   Future<void> _launchApp(String packageName) async {
     _launchHistory[packageName] = DateTime.now().millisecondsSinceEpoch;
+    setState(() {});
     unawaited(_saveLaunchHistory());
     await InstalledApps.startApp(packageName);
   }
 
-  SliverGridDelegate get _gridDelegate =>
-      const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 4,
-        mainAxisSpacing: 16,
-        crossAxisSpacing: 8,
-      );
+  Future<void> _uninstallApps(List<String> packageNames) async {
+    for (final pkg in packageNames) {
+      await InstalledApps.uninstallApp(pkg);
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+    }
+  }
+
+  Future<void> _removeDeletedRecords(List<String> packageNames) async {
+    _deletedApps =
+        _deletedApps.where((d) => !packageNames.contains(d.packageName)).toList();
+    setState(() {});
+    await AppCache.saveDeletedApps(_deletedApps);
+    final currentPkgs = _apps.map((a) => a.packageName).toSet();
+    final keepIcons = {
+      ...currentPkgs,
+      ..._deletedApps.map((d) => d.packageName),
+    };
+    unawaited(AppCache.clearObsolete(keepIcons));
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: Column(
+        child: PageView(
+          controller: _pageController,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              child: TextField(
-                controller: _searchController,
-                autofocus: false,
-                decoration: InputDecoration(
-                  hintText: '앱 검색 (초성/한영 혼용 가능)',
-                  prefixIcon: const Icon(Icons.search),
-                  suffixIcon: _searchController.text.isEmpty
-                      ? null
-                      : IconButton(
-                          icon: const Icon(Icons.clear),
-                          onPressed: () => _searchController.clear(),
-                        ),
-                  filled: true,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(28),
-                    borderSide: BorderSide.none,
-                  ),
-                ),
-              ),
+            SearchPage(
+              apps: _apps,
+              icons: _icons,
+              launchHistory: _launchHistory,
+              loading: _loading,
+              onLaunch: _launchApp,
             ),
-            Expanded(child: _buildResults()),
+            UnusedAppsPage(
+              apps: _apps,
+              icons: _icons,
+              launchHistory: _launchHistory,
+              loading: _loading,
+              onUninstallBatch: _uninstallApps,
+            ),
+            DeletedAppsPage(
+              deletedApps: _deletedApps,
+              icons: _icons,
+              onRemoveRecords: _removeDeletedRecords,
+            ),
           ],
         ),
       ),
     );
   }
-
-  Widget _buildResults() {
-    if (_loading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (_exactResults.isEmpty && _similarResults.isEmpty) {
-      final isSearching = _searchController.text.trim().isNotEmpty;
-      return Center(
-        child: Text(isSearching ? '검색 결과 없음' : '앱을 실행하면 최근 사용에 추가됩니다'),
-      );
-    }
-
-    return CustomScrollView(
-      slivers: [
-        if (_exactResults.isNotEmpty)
-          SliverPadding(
-            padding: const EdgeInsets.all(16),
-            sliver: SliverGrid(
-              gridDelegate: _gridDelegate,
-              delegate: SliverChildBuilderDelegate(
-                (context, index) {
-                  final a = _exactResults[index];
-                  return _AppTile(
-                    name: a.name,
-                    packageName: a.packageName,
-                    icon: _icons[a.packageName],
-                    onTap: () => _launchApp(a.packageName),
-                  );
-                },
-                childCount: _exactResults.length,
-              ),
-            ),
-          ),
-        if (_similarResults.isNotEmpty) ...[
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-              child: Row(
-                children: [
-                  const Icon(Icons.auto_awesome, size: 16),
-                  const SizedBox(width: 6),
-                  Text(
-                    '유사 결과',
-                    style: Theme.of(context).textTheme.labelLarge,
-                  ),
-                  const SizedBox(width: 8),
-                  const Expanded(child: Divider()),
-                ],
-              ),
-            ),
-          ),
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            sliver: SliverGrid(
-              gridDelegate: _gridDelegate,
-              delegate: SliverChildBuilderDelegate(
-                (context, index) {
-                  final a = _similarResults[index];
-                  return _AppTile(
-                    name: a.name,
-                    packageName: a.packageName,
-                    icon: _icons[a.packageName],
-                    onTap: () => _launchApp(a.packageName),
-                    opacity: 0.8,
-                  );
-                },
-                childCount: _similarResults.length,
-              ),
-            ),
-          ),
-        ],
-      ],
-    );
-  }
 }
-
-class _AppTile extends StatelessWidget {
-  final String name;
-  final String packageName;
-  final Uint8List? icon;
-  final VoidCallback onTap;
-  final double opacity;
-
-  const _AppTile({
-    required this.name,
-    required this.packageName,
-    required this.icon,
-    required this.onTap,
-    this.opacity = 1.0,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final bytes = icon;
-    final tile = InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          bytes != null
-              ? Image.memory(bytes, width: 48, height: 48, gaplessPlayback: true)
-              : const Icon(Icons.android, size: 48),
-          const SizedBox(height: 6),
-          Text(
-            name,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 11),
-          ),
-        ],
-      ),
-    );
-    if (opacity >= 1.0) return tile;
-    return Opacity(opacity: opacity, child: tile);
-  }
-}
-
