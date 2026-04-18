@@ -1,11 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:installed_apps/app_info.dart';
 import 'package:installed_apps/installed_apps.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'app_cache.dart';
 import 'korean_search.dart';
 
 const int _kMaxResults = 100;
@@ -37,7 +38,8 @@ class EffortlessLauncherApp extends StatelessWidget {
 }
 
 class _IndexedApp {
-  final AppInfo app;
+  final String name;
+  final String packageName;
   final String nameLower;
   final String chosung;
   final String qwerty;
@@ -45,13 +47,13 @@ class _IndexedApp {
   final String packageLower;
   final String initials;
 
-  _IndexedApp(this.app)
-      : nameLower = app.name.toLowerCase(),
-        chosung = extractChosung(app.name),
-        qwerty = toQwerty(app.name),
-        roman = romanize(app.name),
-        packageLower = app.packageName.toLowerCase(),
-        initials = extractInitials(app.name);
+  _IndexedApp({required this.name, required this.packageName})
+      : nameLower = name.toLowerCase(),
+        chosung = extractChosung(name),
+        qwerty = toQwerty(name),
+        roman = romanize(name),
+        packageLower = packageName.toLowerCase(),
+        initials = extractInitials(name);
 }
 
 class _ScoredApp {
@@ -119,6 +121,7 @@ class LauncherHome extends StatefulWidget {
 class _LauncherHomeState extends State<LauncherHome> {
   final TextEditingController _searchController = TextEditingController();
   List<_IndexedApp> _apps = [];
+  Map<String, Uint8List> _icons = {};
   Map<String, int> _launchHistory = {};
   List<_IndexedApp> _exactResults = [];
   List<_IndexedApp> _similarResults = [];
@@ -140,7 +143,13 @@ class _LauncherHomeState extends State<LauncherHome> {
 
   Future<void> _init() async {
     await _loadLaunchHistory();
-    await _loadApps();
+    final cacheHit = await _loadFromCache();
+    if (cacheHit) {
+      _refreshInBackground();
+    } else {
+      await _loadMetadataOnly();
+      unawaited(_loadIconsAndRefresh());
+    }
   }
 
   Future<void> _loadLaunchHistory() async {
@@ -160,31 +169,100 @@ class _LauncherHomeState extends State<LauncherHome> {
     await prefs.setString(_kLaunchHistoryKey, json.encode(_launchHistory));
   }
 
-  Future<void> _loadApps() async {
+  Future<bool> _loadFromCache() async {
+    final meta = await AppCache.loadMeta();
+    if (meta == null || meta.isEmpty) return false;
+    final indexed = meta
+        .map((m) => _IndexedApp(name: m.name, packageName: m.packageName))
+        .toList()
+      ..sort((a, b) => a.nameLower.compareTo(b.nameLower));
+    final icons = await AppCache.loadIcons(meta.map((m) => m.packageName));
+    if (!mounted) return true;
+    setState(() {
+      _apps = indexed;
+      _icons = icons;
+      _loading = false;
+      _exactResults = _recentApps();
+      _similarResults = [];
+    });
+    return true;
+  }
+
+  Future<void> _loadMetadataOnly() async {
     final apps = await InstalledApps.getInstalledApps(
+      excludeSystemApps: false,
+      withIcon: false,
+    );
+    apps.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    final indexed = apps
+        .map((a) => _IndexedApp(name: a.name, packageName: a.packageName))
+        .toList();
+    if (!mounted) return;
+    setState(() {
+      _apps = indexed;
+      _loading = false;
+      _exactResults = _recentApps();
+      _similarResults = [];
+    });
+    unawaited(AppCache.saveMeta(
+      apps.map((a) => CachedAppMeta(a.packageName, a.name)).toList(),
+    ));
+  }
+
+  Future<void> _refreshInBackground() async {
+    await _loadIconsAndRefresh();
+  }
+
+  Future<void> _loadIconsAndRefresh() async {
+    final appsWithIcons = await InstalledApps.getInstalledApps(
       excludeSystemApps: false,
       withIcon: true,
     );
-    apps.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-    final indexed = apps.map((a) => _IndexedApp(a)).toList();
+    appsWithIcons.sort((a, b) =>
+        a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    final icons = <String, Uint8List>{};
+    for (final a in appsWithIcons) {
+      if (a.icon != null) icons[a.packageName] = a.icon!;
+    }
+    final indexed = appsWithIcons
+        .map((a) => _IndexedApp(name: a.name, packageName: a.packageName))
+        .toList();
+    if (!mounted) return;
     setState(() {
       _apps = indexed;
-      _exactResults = _recentApps();
-      _similarResults = [];
-      _loading = false;
+      _icons = icons;
     });
+    _reapplyQuery();
+    unawaited(AppCache.saveMeta(
+      appsWithIcons
+          .map((a) => CachedAppMeta(a.packageName, a.name))
+          .toList(),
+    ));
+    unawaited(AppCache.saveIcons(icons));
+    unawaited(AppCache.clearObsolete(icons.keys.toSet()));
   }
 
   List<_IndexedApp> _recentApps() {
     if (_launchHistory.isEmpty) return const [];
     final withTs = <MapEntry<int, _IndexedApp>>[];
     for (final a in _apps) {
-      final ts = _launchHistory[a.app.packageName];
+      final ts = _launchHistory[a.packageName];
       if (ts != null) withTs.add(MapEntry(ts, a));
     }
     withTs.sort((x, y) => y.key.compareTo(x.key));
     final take = withTs.length < _kMaxRecent ? withTs.length : _kMaxRecent;
     return withTs.take(take).map((e) => e.value).toList();
+  }
+
+  void _reapplyQuery() {
+    if (_searchController.text.trim().isEmpty) {
+      setState(() {
+        _exactResults = _recentApps();
+        _similarResults = [];
+      });
+    } else {
+      _onSearchChanged();
+    }
   }
 
   void _onSearchChanged() {
@@ -228,10 +306,7 @@ class _LauncherHomeState extends State<LauncherHome> {
     final remaining = _kMaxResults - exactCapped.length;
     final similarCapped = remaining <= 0
         ? <_IndexedApp>[]
-        : scored
-            .take(remaining)
-            .map((s) => s.app)
-            .toList();
+        : scored.take(remaining).map((s) => s.app).toList();
 
     setState(() {
       _exactResults = exactCapped;
@@ -239,10 +314,10 @@ class _LauncherHomeState extends State<LauncherHome> {
     });
   }
 
-  Future<void> _launchApp(AppInfo app) async {
-    _launchHistory[app.packageName] = DateTime.now().millisecondsSinceEpoch;
-    await _saveLaunchHistory();
-    await InstalledApps.startApp(app.packageName);
+  Future<void> _launchApp(String packageName) async {
+    _launchHistory[packageName] = DateTime.now().millisecondsSinceEpoch;
+    unawaited(_saveLaunchHistory());
+    await InstalledApps.startApp(packageName);
   }
 
   SliverGridDelegate get _gridDelegate =>
@@ -309,8 +384,10 @@ class _LauncherHomeState extends State<LauncherHome> {
                 (context, index) {
                   final a = _exactResults[index];
                   return _AppTile(
-                    app: a.app,
-                    onTap: () => _launchApp(a.app),
+                    name: a.name,
+                    packageName: a.packageName,
+                    icon: _icons[a.packageName],
+                    onTap: () => _launchApp(a.packageName),
                   );
                 },
                 childCount: _exactResults.length,
@@ -343,8 +420,10 @@ class _LauncherHomeState extends State<LauncherHome> {
                 (context, index) {
                   final a = _similarResults[index];
                   return _AppTile(
-                    app: a.app,
-                    onTap: () => _launchApp(a.app),
+                    name: a.name,
+                    packageName: a.packageName,
+                    icon: _icons[a.packageName],
+                    onTap: () => _launchApp(a.packageName),
                     opacity: 0.8,
                   );
                 },
@@ -359,27 +438,35 @@ class _LauncherHomeState extends State<LauncherHome> {
 }
 
 class _AppTile extends StatelessWidget {
-  final AppInfo app;
+  final String name;
+  final String packageName;
+  final Uint8List? icon;
   final VoidCallback onTap;
   final double opacity;
 
-  const _AppTile({required this.app, required this.onTap, this.opacity = 1.0});
+  const _AppTile({
+    required this.name,
+    required this.packageName,
+    required this.icon,
+    required this.onTap,
+    this.opacity = 1.0,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final Uint8List? icon = app.icon;
+    final bytes = icon;
     final tile = InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          icon != null
-              ? Image.memory(icon, width: 48, height: 48)
+          bytes != null
+              ? Image.memory(bytes, width: 48, height: 48, gaplessPlayback: true)
               : const Icon(Icons.android, size: 48),
           const SizedBox(height: 6),
           Text(
-            app.name,
+            name,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
@@ -392,3 +479,4 @@ class _AppTile extends StatelessWidget {
     return Opacity(opacity: opacity, child: tile);
   }
 }
+
