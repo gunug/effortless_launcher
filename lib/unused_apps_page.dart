@@ -92,13 +92,13 @@ class _UnusedAppsPageState extends State<UnusedAppsPage> {
   }
 
   String _formatLastUsed(int? ts) {
-    if (ts == null) return '사용 이력 없음';
+    if (ts == null) return 'Never used';
     final now = DateTime.now();
     final d = DateTime.fromMillisecondsSinceEpoch(ts);
     final days = now.difference(d).inDays;
     final dateStr =
         '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
-    return '마지막 사용: $dateStr ($days일 전)';
+    return 'Last used: $dateStr ($days days ago)';
   }
 
   Future<void> _deleteSelected() async {
@@ -106,17 +106,17 @@ class _UnusedAppsPageState extends State<UnusedAppsPage> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('선택한 앱 삭제'),
-        content: Text('${_selected.length}개 앱을 순차적으로 삭제합니다.\n'
-            '각 앱마다 시스템 확인 창이 표시됩니다.'),
+        title: const Text('Delete selected'),
+        content: Text('Deleting ${_selected.length} apps one by one.\n'
+            'Each app will show a system prompt.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('취소'),
+            child: const Text('Cancel'),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('진행'),
+            child: const Text('Continue'),
           ),
         ],
       ),
@@ -180,12 +180,12 @@ class _UnusedAppsPageState extends State<UnusedAppsPage> {
                   ? Theme.of(context).colorScheme.primary
                   : null,
             ),
-            tooltip: isProtectedLive ? '보호 해제' : '보호',
+            tooltip: isProtectedLive ? 'Unprotect' : 'Protect',
             onPressed: () => widget.onToggleProtect(a.packageName),
           ),
           IconButton(
             icon: const Icon(Icons.delete_outline),
-            tooltip: isProtectedLive ? '보호됨 — 삭제 불가' : '삭제',
+            tooltip: isProtectedLive ? "Protected — can't delete" : 'Delete',
             onPressed:
                 isProtectedLive ? null : () => _deleteOne(a.packageName),
           ),
@@ -203,7 +203,7 @@ class _UnusedAppsPageState extends State<UnusedAppsPage> {
     final parts = _partition();
     final total = parts.normal.length + parts.protected.length;
     if (total == 0) {
-      return const Center(child: Text('정리할 앱 없음'));
+      return const Center(child: Text('No apps'));
     }
     return Column(
       children: [
@@ -213,19 +213,19 @@ class _UnusedAppsPageState extends State<UnusedAppsPage> {
             children: [
               Expanded(
                 child: Text(
-                  '앱 관리  $total개',
+                  'App Manager  $total',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
               Text(
-                '선택 ${_selected.length}',
+                'Selected: ${_selected.length}',
                 style: Theme.of(context).textTheme.labelMedium,
               ),
               const SizedBox(width: 8),
               FilledButton.icon(
                 onPressed: _selected.isEmpty ? null : _deleteSelected,
                 icon: const Icon(Icons.delete_sweep),
-                label: const Text('선택 삭제'),
+                label: const Text('Delete selected'),
               ),
             ],
           ),
@@ -248,7 +248,7 @@ class _UnusedAppsPageState extends State<UnusedAppsPage> {
                       const Icon(Icons.lock, size: 16),
                       const SizedBox(width: 6),
                       Text(
-                        '보호됨  ${parts.protected.length}개',
+                        'Protected  ${parts.protected.length}',
                         style: Theme.of(context).textTheme.labelLarge,
                       ),
                       const SizedBox(width: 8),

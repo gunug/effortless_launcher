@@ -27,7 +27,7 @@ Future<void> showAppContextMenu({
           children: [
             const Icon(Icons.delete_outline, size: 18),
             const SizedBox(width: 12),
-            Text(isProtected ? '삭제 (보호됨)' : '삭제'),
+            Text(isProtected ? 'Delete (Protected)' : 'Delete'),
           ],
         ),
       ),
@@ -38,7 +38,7 @@ Future<void> showAppContextMenu({
           children: [
             Icon(Icons.visibility_off_outlined, size: 18),
             SizedBox(width: 12),
-            Text('표시 제거'),
+            Text('Hide'),
           ],
         ),
       ),
@@ -52,7 +52,7 @@ Future<void> showAppContextMenu({
               size: 18,
             ),
             const SizedBox(width: 12),
-            Text(isProtected ? '보호 해제' : '보호'),
+            Text(isProtected ? 'Unprotect' : 'Protect'),
           ],
         ),
       ),

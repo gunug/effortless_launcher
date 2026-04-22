@@ -58,7 +58,6 @@ class LauncherHome extends StatefulWidget {
 class _LauncherHomeState extends State<LauncherHome>
     with WidgetsBindingObserver {
   PageController? _pageController;
-  int _hotZonePageVisits = 0;
   int _unusedPageVisits = 0;
   List<IndexedApp> _apps = [];
   Map<String, Uint8List> _icons = {};
@@ -435,9 +434,7 @@ class _LauncherHomeState extends State<LauncherHome>
             if (i == _kHotZonePageIndex || i == _kSearchPageIndex) {
               unawaited(_saveLastPage(i));
             }
-            if (i == _kHotZonePageIndex) {
-              setState(() => _hotZonePageVisits++);
-            } else if (i == _kUnusedPageIndex) {
+            if (i == _kUnusedPageIndex) {
               setState(() => _unusedPageVisits++);
             }
           },
@@ -448,7 +445,6 @@ class _LauncherHomeState extends State<LauncherHome>
               launchLog: _launchLog,
               installedAt: _installedAt,
               protectedPackages: _protectedPackages,
-              visitCounter: _hotZonePageVisits,
               loading: _loading,
               onLaunch: _launchApp,
               onUninstall: _uninstallOne,

@@ -26,7 +26,7 @@ class _DeletedAppsPageState extends State<DeletedAppsPage> {
 
   String _formatConfirmed(int ts) {
     final d = DateTime.fromMillisecondsSinceEpoch(ts);
-    return '삭제 확인 시각: ${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')} '
+    return 'Detected: ${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')} '
         '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
   }
 
@@ -46,16 +46,16 @@ class _DeletedAppsPageState extends State<DeletedAppsPage> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('기록 지우기'),
-        content: Text('${_selected.length}개 기록을 지웁니다. (실제 앱 재설치와는 무관)'),
+        title: const Text('Clear records'),
+        content: Text("Clear ${_selected.length} records. (This doesn't reinstall apps)"),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('취소'),
+            child: const Text('Cancel'),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('지우기'),
+            child: const Text('Clear'),
           ),
         ],
       ),
@@ -72,7 +72,7 @@ class _DeletedAppsPageState extends State<DeletedAppsPage> {
       ..sort((a, b) => b.confirmedAt.compareTo(a.confirmedAt));
 
     if (list.isEmpty) {
-      return const Center(child: Text('삭제 기록 없음'));
+      return const Center(child: Text('No deleted apps'));
     }
 
     return Column(
@@ -83,19 +83,19 @@ class _DeletedAppsPageState extends State<DeletedAppsPage> {
             children: [
               Expanded(
                 child: Text(
-                  '삭제된 앱  ${list.length}개',
+                  'Deleted Apps  ${list.length}',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
               Text(
-                '선택 ${_selected.length}',
+                'Selected: ${_selected.length}',
                 style: Theme.of(context).textTheme.labelMedium,
               ),
               const SizedBox(width: 8),
               FilledButton.icon(
                 onPressed: _selected.isEmpty ? null : _removeSelected,
                 icon: const Icon(Icons.clear_all),
-                label: const Text('기록 지우기'),
+                label: const Text('Clear records'),
               ),
             ],
           ),
@@ -141,7 +141,7 @@ class _DeletedAppsPageState extends State<DeletedAppsPage> {
                 ),
                 trailing: FilledButton.tonalIcon(
                   icon: const Icon(Icons.shop, size: 18),
-                  label: const Text('재설치'),
+                  label: const Text('Reinstall'),
                   onPressed: () => _openPlayStore(d.packageName),
                 ),
                 onTap: () {

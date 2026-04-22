@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import 'app_context_menu.dart';
+import 'donation_dialog.dart';
 import 'models.dart';
 import 'search_page.dart';
 
@@ -16,7 +17,6 @@ class HotZonePage extends StatefulWidget {
   final Map<String, List<int>> launchLog;
   final Map<String, int> installedAt;
   final Set<String> protectedPackages;
-  final int visitCounter;
   final bool loading;
   final Future<void> Function(String packageName) onLaunch;
   final Future<void> Function(String packageName) onUninstall;
@@ -30,7 +30,6 @@ class HotZonePage extends StatefulWidget {
     required this.launchLog,
     required this.installedAt,
     required this.protectedPackages,
-    required this.visitCounter,
     required this.loading,
     required this.onLaunch,
     required this.onUninstall,
@@ -54,9 +53,7 @@ class _HotZonePageState extends State<HotZonePage> {
   @override
   void didUpdateWidget(covariant HotZonePage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.visitCounter != widget.visitCounter) {
-      setState(() => _committed = _compute());
-    }
+    _committed = _compute();
   }
 
   List<IndexedApp> _compute() {
@@ -115,41 +112,37 @@ class _HotZonePageState extends State<HotZonePage> {
       builder: (ctx) {
         final titleSmall = Theme.of(ctx).textTheme.titleSmall;
         return AlertDialog(
-          title: const Text('자주 사용하는 앱'),
+          title: const Text('Frequently Used'),
           content: SingleChildScrollView(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Text('이 런처에서 실행한 앱들을 평가하여 상위 28개를 자동 정렬합니다.'),
+                const Text('Auto-ranks the top 28 apps launched from this launcher.'),
                 const SizedBox(height: 16),
-                Text('정렬 규칙', style: titleSmall),
+                Text('Ranking rules', style: titleSmall),
                 const SizedBox(height: 6),
-                const Text('• 최근 7일 이내 설치된 앱은 NEW 배지와 함께 최상위에 먼저 표시됩니다'),
-                const Text('• 자주 사용할수록 앞에 표시됩니다'),
-                const Text('• 최근에 사용할수록 앞에 표시됩니다'),
-                const Text('• 사용하지 않을수록 뒤로 밀려납니다'),
+                const Text('• Apps installed in the last 7 days appear first with a NEW badge'),
+                const Text('• The more often you use an app, the higher it ranks'),
+                const Text('• The more recently you use an app, the higher it ranks'),
+                const Text('• Unused apps move down over time'),
                 const SizedBox(height: 16),
-                Text('알아두세요', style: titleSmall),
+                Text('Good to know', style: titleSmall),
                 const SizedBox(height: 6),
-                const Text('• 7일이 지나면 NEW 배지는 사라지고 일반 정렬에 편입됩니다'),
-                const Text('• 이 기간 동안 자주 쓰던 앱은 이후에도 상위에 유지될 수 있습니다'),
-                const Text('• 이 런처를 통해 실행한 기록만 집계됩니다 (앱당 최근 50회까지)'),
-                const Text('• 순위는 페이지 재방문 시 갱신됩니다'),
-                const Padding(
-                  padding: EdgeInsets.only(left: 10),
-                  child: Text('(같은 페이지에 머무는 동안은 순서 고정)'),
-                ),
-                const Text("• '표시 제거' 기능을 사용하여 즉시 제외(재 집계) 가능합니다"),
-                const Text('• 🔒 배지: 보호된 앱. 앱 관리 페이지에서 삭제 불가'),
-                const Text('• 길게 눌러: 삭제 / 표시 제거 / 보호'),
+                const Text('• After 7 days the NEW badge disappears and normal ranking applies'),
+                const Text('• Apps used often during this period may stay high'),
+                const Text('• Only launches from this launcher are counted (up to 50 per app)'),
+                const Text('• Ranking updates on every change (launch, install, delete)'),
+                const Text("• Use 'Hide' to remove an app and restart its tracking"),
+                const Text("• 🔒 badge: Protected. Can't delete in App Manager"),
+                const Text('• Long press: Delete / Hide / Protect'),
               ],
             ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx),
-              child: const Text('확인'),
+              child: const Text('OK'),
             ),
           ],
         );
@@ -184,15 +177,21 @@ class _HotZonePageState extends State<HotZonePage> {
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
-                  '자주 사용하는 앱',
+                  'Frequently Used',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
               IconButton(
                 icon: const Icon(Icons.help_outline, size: 20),
-                tooltip: '도움말',
+                tooltip: 'Help',
                 visualDensity: VisualDensity.compact,
                 onPressed: _showHelp,
+              ),
+              IconButton(
+                icon: const Icon(Icons.attach_money, size: 20),
+                tooltip: 'Support',
+                visualDensity: VisualDensity.compact,
+                onPressed: () => showDonationDialog(context),
               ),
             ],
           ),
@@ -203,7 +202,7 @@ class _HotZonePageState extends State<HotZonePage> {
                   child: Padding(
                     padding: EdgeInsets.all(32),
                     child: Text(
-                      '앱을 실행하면 자주 사용하는 앱이 여기에 표시됩니다',
+                      'Apps you use most will appear here',
                       textAlign: TextAlign.center,
                     ),
                   ),

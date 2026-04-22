@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import 'app_context_menu.dart';
+import 'donation_dialog.dart';
 import 'korean_search.dart';
 import 'models.dart';
 
@@ -215,33 +216,33 @@ class _SearchPageState extends State<SearchPage> {
       builder: (ctx) {
         final titleSmall = Theme.of(ctx).textTheme.titleSmall;
         return AlertDialog(
-          title: const Text('최근 사용한 앱'),
+          title: const Text('Recently Used'),
           content: SingleChildScrollView(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Text('이 런처에서 최근에 실행한 앱을 최대 24개까지 표시합니다.'),
+                const Text('Shows up to 24 apps you recently launched from this launcher.'),
                 const SizedBox(height: 16),
-                Text('정렬 규칙', style: titleSmall),
+                Text('Order', style: titleSmall),
                 const SizedBox(height: 6),
-                const Text('• 최근에 실행한 앱일수록 앞에 표시됩니다'),
+                const Text('• Most recently used apps appear first'),
                 const SizedBox(height: 16),
-                Text('알아두세요', style: titleSmall),
+                Text('Good to know', style: titleSmall),
                 const SizedBox(height: 6),
-                const Text('• 이 런처를 통해 실행한 기록만 집계됩니다'),
-                const Text('• 검색창에 입력하면 전체 앱에서 검색됩니다'),
-                const Text("• '표시 제거'로 목록에서 즉시 제외할 수 있습니다"),
-                const Text('• 🔒 배지: 보호된 앱. 앱 관리 페이지에서 삭제 불가'),
-                const Text('• NEW 배지: 최근 7일 이내 설치된 앱'),
-                const Text('• 길게 눌러: 삭제 / 표시 제거 / 보호'),
+                const Text('• Only launches from this launcher are counted'),
+                const Text('• Type in the search box to find any app'),
+                const Text("• Use 'Hide' to remove an app from this list"),
+                const Text("• 🔒 badge: Protected. Can't delete in App Manager"),
+                const Text('• NEW badge: Installed in the last 7 days'),
+                const Text('• Long press: Delete / Hide / Protect'),
               ],
             ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx),
-              child: const Text('확인'),
+              child: const Text('OK'),
             ),
           ],
         );
@@ -259,7 +260,7 @@ class _SearchPageState extends State<SearchPage> {
             controller: _searchController,
             autofocus: false,
             decoration: InputDecoration(
-              hintText: '앱 검색 (초성/한영 혼용 가능)',
+              hintText: 'Search apps',
               prefixIcon: const Icon(Icons.search),
               suffixIcon: _searchController.text.isEmpty
                   ? null
@@ -287,7 +288,7 @@ class _SearchPageState extends State<SearchPage> {
     if (_exactResults.isEmpty && _similarResults.isEmpty) {
       final isSearching = _searchController.text.trim().isNotEmpty;
       return Center(
-        child: Text(isSearching ? '검색 결과 없음' : '앱을 실행하면 최근 사용에 추가됩니다'),
+        child: Text(isSearching ? 'No results' : 'Launch an app to see recents'),
       );
     }
 
@@ -304,15 +305,21 @@ class _SearchPageState extends State<SearchPage> {
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
-                      '최근 사용한 앱',
+                      'Recently Used',
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
                   ),
                   IconButton(
                     icon: const Icon(Icons.help_outline, size: 20),
-                    tooltip: '도움말',
+                    tooltip: 'Help',
                     visualDensity: VisualDensity.compact,
                     onPressed: _showRecentHelp,
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.attach_money, size: 20),
+                    tooltip: 'Support',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => showDonationDialog(context),
                   ),
                 ],
               ),
@@ -349,7 +356,7 @@ class _SearchPageState extends State<SearchPage> {
                   const Icon(Icons.auto_awesome, size: 16),
                   const SizedBox(width: 6),
                   Text(
-                    '유사 결과',
+                    'Similar',
                     style: Theme.of(context).textTheme.labelLarge,
                   ),
                   const SizedBox(width: 8),
