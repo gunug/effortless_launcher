@@ -450,6 +450,7 @@ class _LauncherHomeState extends State<LauncherHome>
               onUninstall: _uninstallOne,
               onToggleProtect: _toggleProtect,
               onRemoveFromRecent: _removeFromRecent,
+              onRefresh: _refreshWithDiff,
             ),
             SearchPage(
               apps: _apps,

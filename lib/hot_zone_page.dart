@@ -22,6 +22,7 @@ class HotZonePage extends StatefulWidget {
   final Future<void> Function(String packageName) onUninstall;
   final Future<void> Function(String packageName) onToggleProtect;
   final Future<void> Function(String packageName) onRemoveFromRecent;
+  final Future<void> Function() onRefresh;
 
   const HotZonePage({
     super.key,
@@ -35,6 +36,7 @@ class HotZonePage extends StatefulWidget {
     required this.onUninstall,
     required this.onToggleProtect,
     required this.onRemoveFromRecent,
+    required this.onRefresh,
   });
 
   @override
@@ -43,11 +45,22 @@ class HotZonePage extends StatefulWidget {
 
 class _HotZonePageState extends State<HotZonePage> {
   List<IndexedApp> _committed = const [];
+  bool _refreshing = false;
 
   @override
   void initState() {
     super.initState();
     _committed = _compute();
+  }
+
+  Future<void> _handleRefresh() async {
+    if (_refreshing) return;
+    setState(() => _refreshing = true);
+    try {
+      await widget.onRefresh();
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
   }
 
   @override
@@ -180,6 +193,18 @@ class _HotZonePageState extends State<HotZonePage> {
                   'Frequently Used',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
+              ),
+              IconButton(
+                icon: _refreshing
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh, size: 20),
+                tooltip: 'Refresh',
+                visualDensity: VisualDensity.compact,
+                onPressed: _refreshing ? null : _handleRefresh,
               ),
               IconButton(
                 icon: const Icon(Icons.help_outline, size: 20),
