@@ -17,6 +17,7 @@ const String _kLaunchLogKey = 'launch_log_v1';
 const String _kLegacyLaunchHistoryKey = 'launch_history';
 const String _kProtectedKey = 'protected_apps_v1';
 const String _kLastPageKey = 'last_page_index_v1';
+const String _kInstalledAtKey = 'installed_at_v1';
 const int _kDeletedRecordTtlMs = 365 * 24 * 60 * 60 * 1000;
 const int _kMaxLaunchesPerApp = 50;
 const int _kHotZonePageIndex = 0;
@@ -62,6 +63,7 @@ class _LauncherHomeState extends State<LauncherHome>
   List<IndexedApp> _apps = [];
   Map<String, Uint8List> _icons = {};
   Map<String, List<int>> _launchLog = {};
+  Map<String, int> _installedAt = {};
   List<DeletedApp> _deletedApps = [];
   Set<String> _protectedPackages = {};
   bool _loading = true;
@@ -104,6 +106,7 @@ class _LauncherHomeState extends State<LauncherHome>
   Future<void> _init() async {
     await _loadLaunchLog();
     await _loadProtected();
+    await _loadInstalledAt();
     _deletedApps = await AppCache.loadDeletedApps();
     _purgeExpiredDeletedRecords();
     final cacheHit = await _loadFromCache();
@@ -179,6 +182,23 @@ class _LauncherHomeState extends State<LauncherHome>
         _kProtectedKey, json.encode(_protectedPackages.toList()));
   }
 
+  Future<void> _loadInstalledAt() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_kInstalledAtKey);
+    if (raw == null || raw.isEmpty) return;
+    try {
+      final decoded = json.decode(raw) as Map<String, dynamic>;
+      _installedAt = decoded.map((k, v) => MapEntry(k, (v as num).toInt()));
+    } catch (_) {
+      _installedAt = {};
+    }
+  }
+
+  Future<void> _saveInstalledAt() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kInstalledAtKey, json.encode(_installedAt));
+  }
+
   void _purgeExpiredDeletedRecords() {
     final cutoff = DateTime.now().millisecondsSinceEpoch - _kDeletedRecordTtlMs;
     final before = _deletedApps.length;
@@ -252,6 +272,26 @@ class _LauncherHomeState extends State<LauncherHome>
       final previousPkgs = _apps.map((a) => a.packageName).toSet();
       final currentPkgs = freshApps.map((a) => a.packageName).toSet();
       final newlyDeleted = previousPkgs.difference(currentPkgs);
+
+      final hasBaseline = _installedAt.isNotEmpty;
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
+      var installedAtChanged = false;
+      for (final pkg in currentPkgs) {
+        if (!_installedAt.containsKey(pkg)) {
+          _installedAt[pkg] = hasBaseline ? nowMs : 0;
+          installedAtChanged = true;
+        }
+      }
+      final installedAtKeys = _installedAt.keys.toList();
+      for (final pkg in installedAtKeys) {
+        if (!currentPkgs.contains(pkg)) {
+          _installedAt.remove(pkg);
+          installedAtChanged = true;
+        }
+      }
+      if (installedAtChanged) {
+        unawaited(_saveInstalledAt());
+      }
 
       if (newlyDeleted.isNotEmpty && _apps.isNotEmpty) {
         final now = DateTime.now().millisecondsSinceEpoch;
@@ -406,6 +446,7 @@ class _LauncherHomeState extends State<LauncherHome>
               apps: _apps,
               icons: _icons,
               launchLog: _launchLog,
+              installedAt: _installedAt,
               protectedPackages: _protectedPackages,
               visitCounter: _hotZonePageVisits,
               loading: _loading,
@@ -418,6 +459,7 @@ class _LauncherHomeState extends State<LauncherHome>
               apps: _apps,
               icons: _icons,
               launchHistory: lastLaunchMap,
+              installedAt: _installedAt,
               protectedPackages: _protectedPackages,
               loading: _loading,
               onLaunch: _launchApp,

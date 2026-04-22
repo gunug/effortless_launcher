@@ -7,7 +7,7 @@ import 'korean_search.dart';
 import 'models.dart';
 
 const int _kMaxResults = 100;
-const int _kMaxRecent = 28;
+const int _kMaxRecent = 24;
 
 class _ScoredApp {
   final IndexedApp app;
@@ -64,10 +64,19 @@ int _similarityScore(IndexedApp a, String qLower, String qRoman, String qQwerty)
   return -1;
 }
 
+const int kNewAppWindowMs = 7 * 24 * 60 * 60 * 1000;
+
+bool isNewApp(Map<String, int> installedAt, String packageName) {
+  final ts = installedAt[packageName];
+  if (ts == null || ts == 0) return false;
+  return DateTime.now().millisecondsSinceEpoch - ts < kNewAppWindowMs;
+}
+
 class SearchPage extends StatefulWidget {
   final List<IndexedApp> apps;
   final Map<String, Uint8List> icons;
   final Map<String, int> launchHistory;
+  final Map<String, int> installedAt;
   final Set<String> protectedPackages;
   final bool loading;
   final Future<void> Function(String packageName) onLaunch;
@@ -80,6 +89,7 @@ class SearchPage extends StatefulWidget {
     required this.apps,
     required this.icons,
     required this.launchHistory,
+    required this.installedAt,
     required this.protectedPackages,
     required this.loading,
     required this.onLaunch,
@@ -199,6 +209,46 @@ class _SearchPageState extends State<SearchPage> {
     );
   }
 
+  void _showRecentHelp() {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        final titleSmall = Theme.of(ctx).textTheme.titleSmall;
+        return AlertDialog(
+          title: const Text('최근 사용한 앱'),
+          content: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('이 런처에서 최근에 실행한 앱을 최대 24개까지 표시합니다.'),
+                const SizedBox(height: 16),
+                Text('정렬 규칙', style: titleSmall),
+                const SizedBox(height: 6),
+                const Text('• 최근에 실행한 앱일수록 앞에 표시됩니다'),
+                const SizedBox(height: 16),
+                Text('알아두세요', style: titleSmall),
+                const SizedBox(height: 6),
+                const Text('• 이 런처를 통해 실행한 기록만 집계됩니다'),
+                const Text('• 검색창에 입력하면 전체 앱에서 검색됩니다'),
+                const Text("• '표시 제거'로 목록에서 즉시 제외할 수 있습니다"),
+                const Text('• 🔒 배지: 보호된 앱. 앱 관리 페이지에서 삭제 불가'),
+                const Text('• NEW 배지: 최근 7일 이내 설치된 앱'),
+                const Text('• 길게 눌러: 삭제 / 표시 제거 / 보호'),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('확인'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -241,8 +291,33 @@ class _SearchPageState extends State<SearchPage> {
       );
     }
 
+    final isRecentMode = _searchController.text.trim().isEmpty;
     return CustomScrollView(
       slivers: [
+        if (isRecentMode && _exactResults.isNotEmpty)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
+              child: Row(
+                children: [
+                  const Icon(Icons.history, size: 20),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      '최근 사용한 앱',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.help_outline, size: 20),
+                    tooltip: '도움말',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: _showRecentHelp,
+                  ),
+                ],
+              ),
+            ),
+          ),
         if (_exactResults.isNotEmpty)
           SliverPadding(
             padding: const EdgeInsets.all(16),
@@ -256,6 +331,7 @@ class _SearchPageState extends State<SearchPage> {
                     icon: widget.icons[a.packageName],
                     isProtected:
                         widget.protectedPackages.contains(a.packageName),
+                    isNew: isNewApp(widget.installedAt, a.packageName),
                     onTap: () => widget.onLaunch(a.packageName),
                     onLongPress: (pos) => _showContextMenu(pos, a),
                   );
@@ -294,6 +370,7 @@ class _SearchPageState extends State<SearchPage> {
                     icon: widget.icons[a.packageName],
                     isProtected:
                         widget.protectedPackages.contains(a.packageName),
+                    isNew: isNewApp(widget.installedAt, a.packageName),
                     onTap: () => widget.onLaunch(a.packageName),
                     onLongPress: (pos) => _showContextMenu(pos, a),
                     opacity: 0.8,
@@ -313,6 +390,7 @@ class AppGridTile extends StatefulWidget {
   final String name;
   final Uint8List? icon;
   final bool isProtected;
+  final bool isNew;
   final VoidCallback onTap;
   final void Function(Offset globalPosition)? onLongPress;
   final double opacity;
@@ -323,6 +401,7 @@ class AppGridTile extends StatefulWidget {
     required this.icon,
     required this.onTap,
     this.isProtected = false,
+    this.isNew = false,
     this.onLongPress,
     this.opacity = 1.0,
   });
@@ -360,6 +439,29 @@ class _AppGridTileState extends State<AppGridTile> {
                   border: Border.all(color: Colors.white, width: 0.8),
                 ),
                 child: const Icon(Icons.lock, size: 10, color: Colors.white),
+              ),
+            ),
+          if (widget.isNew)
+            Positioned(
+              top: -4,
+              right: -6,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade600,
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: Colors.white, width: 0.8),
+                ),
+                child: const Text(
+                  'NEW',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 8,
+                    fontWeight: FontWeight.bold,
+                    height: 1.0,
+                  ),
+                ),
               ),
             ),
         ],

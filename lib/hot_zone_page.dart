@@ -14,6 +14,7 @@ class HotZonePage extends StatefulWidget {
   final List<IndexedApp> apps;
   final Map<String, Uint8List> icons;
   final Map<String, List<int>> launchLog;
+  final Map<String, int> installedAt;
   final Set<String> protectedPackages;
   final int visitCounter;
   final bool loading;
@@ -27,6 +28,7 @@ class HotZonePage extends StatefulWidget {
     required this.apps,
     required this.icons,
     required this.launchLog,
+    required this.installedAt,
     required this.protectedPackages,
     required this.visitCounter,
     required this.loading,
@@ -58,10 +60,19 @@ class _HotZonePageState extends State<HotZonePage> {
   }
 
   List<IndexedApp> _compute() {
-    if (widget.apps.isEmpty || widget.launchLog.isEmpty) return const [];
+    if (widget.apps.isEmpty) return const [];
     final now = DateTime.now().millisecondsSinceEpoch;
+    final newCutoff = now - kNewAppWindowMs;
+
+    final newApps = <IndexedApp>[];
     final scored = <_Scored>[];
     for (final a in widget.apps) {
+      final installTs = widget.installedAt[a.packageName];
+      final isNew = installTs != null && installTs > 0 && installTs >= newCutoff;
+      if (isNew) {
+        newApps.add(a);
+        continue;
+      }
       final log = widget.launchLog[a.packageName];
       if (log == null || log.isEmpty) continue;
       var sum = 0.0;
@@ -72,15 +83,78 @@ class _HotZonePageState extends State<HotZonePage> {
       }
       if (sum > 0) scored.add(_Scored(a, sum, log.first));
     }
+
+    newApps.sort((x, y) {
+      final tsX = widget.installedAt[x.packageName] ?? 0;
+      final tsY = widget.installedAt[y.packageName] ?? 0;
+      final cmp = tsY.compareTo(tsX);
+      if (cmp != 0) return cmp;
+      return x.nameLower.compareTo(y.nameLower);
+    });
     scored.sort((x, y) {
       final cmp = y.score.compareTo(x.score);
       if (cmp != 0) return cmp;
       return x.lastLaunch.compareTo(y.lastLaunch);
     });
-    return scored
-        .take(_kHotZoneLimit)
-        .map((e) => e.app)
-        .toList(growable: false);
+
+    final result = <IndexedApp>[];
+    for (final a in newApps) {
+      if (result.length >= _kHotZoneLimit) break;
+      result.add(a);
+    }
+    for (final s in scored) {
+      if (result.length >= _kHotZoneLimit) break;
+      result.add(s.app);
+    }
+    return List<IndexedApp>.unmodifiable(result);
+  }
+
+  void _showHelp() {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        final titleSmall = Theme.of(ctx).textTheme.titleSmall;
+        return AlertDialog(
+          title: const Text('자주 사용하는 앱'),
+          content: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('이 런처에서 실행한 앱들을 평가하여 상위 28개를 자동 정렬합니다.'),
+                const SizedBox(height: 16),
+                Text('정렬 규칙', style: titleSmall),
+                const SizedBox(height: 6),
+                const Text('• 최근 7일 이내 설치된 앱은 NEW 배지와 함께 최상위에 먼저 표시됩니다'),
+                const Text('• 자주 사용할수록 앞에 표시됩니다'),
+                const Text('• 최근에 사용할수록 앞에 표시됩니다'),
+                const Text('• 사용하지 않을수록 뒤로 밀려납니다'),
+                const SizedBox(height: 16),
+                Text('알아두세요', style: titleSmall),
+                const SizedBox(height: 6),
+                const Text('• 7일이 지나면 NEW 배지는 사라지고 일반 정렬에 편입됩니다'),
+                const Text('• 이 기간 동안 자주 쓰던 앱은 이후에도 상위에 유지될 수 있습니다'),
+                const Text('• 이 런처를 통해 실행한 기록만 집계됩니다 (앱당 최근 50회까지)'),
+                const Text('• 순위는 페이지 재방문 시 갱신됩니다'),
+                const Padding(
+                  padding: EdgeInsets.only(left: 10),
+                  child: Text('(같은 페이지에 머무는 동안은 순서 고정)'),
+                ),
+                const Text("• '표시 제거' 기능을 사용하여 즉시 제외(재 집계) 가능합니다"),
+                const Text('• 🔒 배지: 보호된 앱. 앱 관리 페이지에서 삭제 불가'),
+                const Text('• 길게 눌러: 삭제 / 표시 제거 / 보호'),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('확인'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Future<void> _showContextMenu(Offset position, IndexedApp app) {
@@ -103,14 +177,22 @@ class _HotZonePageState extends State<HotZonePage> {
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+          padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
           child: Row(
             children: [
               const Icon(Icons.local_fire_department, size: 20),
               const SizedBox(width: 6),
-              Text(
-                '자주 사용하는 앱',
-                style: Theme.of(context).textTheme.titleMedium,
+              Expanded(
+                child: Text(
+                  '자주 사용하는 앱',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.help_outline, size: 20),
+                tooltip: '도움말',
+                visualDensity: VisualDensity.compact,
+                onPressed: _showHelp,
               ),
             ],
           ),
@@ -142,6 +224,7 @@ class _HotZonePageState extends State<HotZonePage> {
                       icon: widget.icons[a.packageName],
                       isProtected:
                           widget.protectedPackages.contains(a.packageName),
+                      isNew: isNewApp(widget.installedAt, a.packageName),
                       onTap: () => widget.onLaunch(a.packageName),
                       onLongPress: (pos) => _showContextMenu(pos, a),
                     );
