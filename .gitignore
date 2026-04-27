@@ -49,3 +49,7 @@ app.*.map.json
 /android/app/upload-keystore.jks
 *.jks
 *.keystore
+
+# Play Console service account credentials
+/android/play-credentials.json
+/key/

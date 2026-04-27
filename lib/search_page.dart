@@ -79,6 +79,7 @@ class SearchPage extends StatefulWidget {
   final Map<String, int> launchHistory;
   final Map<String, int> installedAt;
   final Set<String> protectedPackages;
+  final Map<String, int> notificationCounts;
   final bool loading;
   final Future<void> Function(String packageName) onLaunch;
   final Future<void> Function(String packageName) onUninstall;
@@ -92,6 +93,7 @@ class SearchPage extends StatefulWidget {
     required this.launchHistory,
     required this.installedAt,
     required this.protectedPackages,
+    required this.notificationCounts,
     required this.loading,
     required this.onLaunch,
     required this.onUninstall,
@@ -339,6 +341,8 @@ class _SearchPageState extends State<SearchPage> {
                     isProtected:
                         widget.protectedPackages.contains(a.packageName),
                     isNew: isNewApp(widget.installedAt, a.packageName),
+                    notificationCount:
+                        widget.notificationCounts[a.packageName] ?? 0,
                     onTap: () => widget.onLaunch(a.packageName),
                     onLongPress: (pos) => _showContextMenu(pos, a),
                   );
@@ -378,6 +382,8 @@ class _SearchPageState extends State<SearchPage> {
                     isProtected:
                         widget.protectedPackages.contains(a.packageName),
                     isNew: isNewApp(widget.installedAt, a.packageName),
+                    notificationCount:
+                        widget.notificationCounts[a.packageName] ?? 0,
                     onTap: () => widget.onLaunch(a.packageName),
                     onLongPress: (pos) => _showContextMenu(pos, a),
                     opacity: 0.8,
@@ -398,6 +404,7 @@ class AppGridTile extends StatefulWidget {
   final Uint8List? icon;
   final bool isProtected;
   final bool isNew;
+  final int notificationCount;
   final VoidCallback onTap;
   final void Function(Offset globalPosition)? onLongPress;
   final double opacity;
@@ -409,6 +416,7 @@ class AppGridTile extends StatefulWidget {
     required this.onTap,
     this.isProtected = false,
     this.isNew = false,
+    this.notificationCount = 0,
     this.onLongPress,
     this.opacity = 1.0,
   });
@@ -471,6 +479,12 @@ class _AppGridTileState extends State<AppGridTile> {
                 ),
               ),
             ),
+          if (widget.notificationCount > 0)
+            Positioned(
+              bottom: -4,
+              right: -4,
+              child: _NotificationBadge(count: widget.notificationCount),
+            ),
         ],
       ),
     );
@@ -499,5 +513,39 @@ class _AppGridTileState extends State<AppGridTile> {
     );
     if (widget.opacity >= 1.0) return tile;
     return Opacity(opacity: widget.opacity, child: tile);
+  }
+}
+
+class _NotificationBadge extends StatelessWidget {
+  final int count;
+  const _NotificationBadge({required this.count});
+
+  @override
+  Widget build(BuildContext context) {
+    final label = count > 99 ? '99+' : '$count';
+    final isWide = label.length >= 2;
+    return Container(
+      constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+      padding: EdgeInsets.symmetric(
+        horizontal: isWide ? 4 : 0,
+        vertical: 0,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.red.shade600,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white, width: 1.0),
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        label,
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 9,
+          fontWeight: FontWeight.bold,
+          height: 1.1,
+        ),
+      ),
+    );
   }
 }

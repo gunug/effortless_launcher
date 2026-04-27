@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:installed_apps/installed_apps.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -10,19 +11,56 @@ import 'app_cache.dart';
 import 'deleted_apps_page.dart';
 import 'hot_zone_page.dart';
 import 'models.dart';
+import 'notification_counts.dart';
 import 'search_page.dart';
 import 'unused_apps_page.dart';
+import 'usage_stats.dart';
 
 const String _kLaunchLogKey = 'launch_log_v1';
 const String _kLegacyLaunchHistoryKey = 'launch_history';
 const String _kProtectedKey = 'protected_apps_v1';
 const String _kLastPageKey = 'last_page_index_v1';
 const String _kInstalledAtKey = 'installed_at_v1';
+const String _kWarmupStateKey = 'warmup_state_v1';
+const String _kNotifPromptShownKey = 'notif_prompt_shown_v1';
 const int _kDeletedRecordTtlMs = 365 * 24 * 60 * 60 * 1000;
 const int _kMaxLaunchesPerApp = 50;
 const int _kHotZonePageIndex = 0;
 const int _kSearchPageIndex = 1;
 const int _kUnusedPageIndex = 2;
+const int _kWarmupDays = 30;
+
+const EventChannel _kPackageEventChannel =
+    EventChannel('com.onethelab.effortless_launcher/package_events');
+const Duration _kPackageEventDebounce = Duration(milliseconds: 300);
+
+enum _WarmupState { initial, pending, done, skipped }
+
+_WarmupState _warmupStateFromString(String? raw) {
+  switch (raw) {
+    case 'pending':
+      return _WarmupState.pending;
+    case 'done':
+      return _WarmupState.done;
+    case 'skipped':
+      return _WarmupState.skipped;
+    default:
+      return _WarmupState.initial;
+  }
+}
+
+String _warmupStateToString(_WarmupState s) {
+  switch (s) {
+    case _WarmupState.initial:
+      return 'initial';
+    case _WarmupState.pending:
+      return 'pending';
+    case _WarmupState.done:
+      return 'done';
+    case _WarmupState.skipped:
+      return 'skipped';
+  }
+}
 
 void main() {
   runApp(const EffortlessLauncherApp());
@@ -67,25 +105,60 @@ class _LauncherHomeState extends State<LauncherHome>
   Set<String> _protectedPackages = {};
   bool _loading = true;
   bool _refreshing = false;
+  bool _refreshPending = false;
+  StreamSubscription<dynamic>? _packageEventSub;
+  Timer? _packageEventDebounce;
+  StreamSubscription<Map<String, int>>? _notifCountsSub;
+  Map<String, int> _notifCounts = {};
+  _WarmupState _warmupState = _WarmupState.initial;
+  bool _warmupCheckInFlight = false;
+  bool _firstRunPromptShown = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _subscribePackageEvents();
+    _subscribeNotificationCounts();
     _preinit();
   }
 
   @override
   void dispose() {
+    _packageEventDebounce?.cancel();
+    _packageEventSub?.cancel();
+    _notifCountsSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _pageController?.dispose();
     super.dispose();
+  }
+
+  void _subscribePackageEvents() {
+    _packageEventSub =
+        _kPackageEventChannel.receiveBroadcastStream().listen((event) {
+      _packageEventDebounce?.cancel();
+      _packageEventDebounce = Timer(_kPackageEventDebounce, () {
+        unawaited(_refreshWithDiff());
+      });
+    }, onError: (Object err) {
+      debugPrint('package event channel error: $err');
+    });
+  }
+
+  void _subscribeNotificationCounts() {
+    _notifCountsSub = NotificationCountsBridge.stream().listen((counts) {
+      if (!mounted) return;
+      setState(() => _notifCounts = counts);
+    }, onError: (Object err) {
+      debugPrint('notification counts error: $err');
+    });
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(_refreshWithDiff());
+      unawaited(_checkPendingWarmup());
     }
   }
 
@@ -106,6 +179,7 @@ class _LauncherHomeState extends State<LauncherHome>
     await _loadLaunchLog();
     await _loadProtected();
     await _loadInstalledAt();
+    await _loadWarmupState();
     _deletedApps = await AppCache.loadDeletedApps();
     _purgeExpiredDeletedRecords();
     final cacheHit = await _loadFromCache();
@@ -114,6 +188,166 @@ class _LauncherHomeState extends State<LauncherHome>
     } else {
       await _loadMetadataOnly();
       unawaited(_refreshWithDiff());
+    }
+    unawaited(_maybePromptFirstRun());
+  }
+
+  Future<void> _loadWarmupState() async {
+    final prefs = await SharedPreferences.getInstance();
+    _warmupState = _warmupStateFromString(prefs.getString(_kWarmupStateKey));
+  }
+
+  Future<void> _saveWarmupState(_WarmupState state) async {
+    _warmupState = state;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kWarmupStateKey, _warmupStateToString(state));
+  }
+
+  Future<void> _maybePromptFirstRun() async {
+    if (!mounted) return;
+    if (_firstRunPromptShown) return;
+    if (_warmupState != _WarmupState.initial) {
+      unawaited(_maybePromptNotificationAccess());
+      return;
+    }
+    if (_launchLog.isNotEmpty) {
+      await _saveWarmupState(_WarmupState.skipped);
+      unawaited(_maybePromptNotificationAccess());
+      return;
+    }
+    _firstRunPromptShown = true;
+    final accepted = await _showWarmupDialog();
+    if (!mounted) return;
+    if (accepted) {
+      await _saveWarmupState(_WarmupState.pending);
+      final opened = await UsageStatsBridge.openSettings();
+      if (!opened && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open Usage Access settings')),
+        );
+      }
+    } else {
+      await _saveWarmupState(_WarmupState.skipped);
+      unawaited(_maybePromptNotificationAccess());
+    }
+  }
+
+  Future<bool> _showWarmupDialog() async {
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Set up Hot Zone instantly'),
+        content: const Text(
+          'Effortless can use your recent app activity (last 30 days) to '
+          'pre-fill Hot Zone right away, instead of waiting a week or two for it to learn.\n\n'
+          'You will be sent to Android Settings to grant Usage Access. '
+          'You can skip this and Hot Zone will warm up over time.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Skip'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Set up'),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
+  Future<void> _checkPendingWarmup() async {
+    if (_warmupState != _WarmupState.pending) return;
+    if (_warmupCheckInFlight) return;
+    _warmupCheckInFlight = true;
+    try {
+      final granted = await UsageStatsBridge.hasPermission();
+      if (!granted) return;
+      final events = await UsageStatsBridge.queryEvents(
+        days: _kWarmupDays,
+        maxPerPackage: _kMaxLaunchesPerApp,
+      );
+      if (events.isEmpty) {
+        await _saveWarmupState(_WarmupState.done);
+        unawaited(_maybePromptNotificationAccess());
+        return;
+      }
+      final imported = _mergeWarmupIntoLaunchLog(events);
+      await _saveLaunchLog();
+      await _saveWarmupState(_WarmupState.done);
+      if (mounted) {
+        setState(() {});
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Imported recent activity for $imported apps'),
+          ),
+        );
+      }
+      unawaited(_maybePromptNotificationAccess());
+    } finally {
+      _warmupCheckInFlight = false;
+    }
+  }
+
+  int _mergeWarmupIntoLaunchLog(Map<String, List<int>> events) {
+    var imported = 0;
+    events.forEach((pkg, timestamps) {
+      if (timestamps.isEmpty) return;
+      final existing = _launchLog[pkg] ?? <int>[];
+      final merged = <int>{...existing, ...timestamps}.toList()..sort((a, b) => b.compareTo(a));
+      final capped = merged.length > _kMaxLaunchesPerApp
+          ? merged.sublist(0, _kMaxLaunchesPerApp)
+          : merged;
+      _launchLog[pkg] = capped;
+      imported++;
+    });
+    return imported;
+  }
+
+  Future<void> _maybePromptNotificationAccess() async {
+    if (!mounted) return;
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool(_kNotifPromptShownKey) == true) return;
+    final granted = await NotificationCountsBridge.hasPermission();
+    if (granted) {
+      await prefs.setBool(_kNotifPromptShownKey, true);
+      return;
+    }
+    if (!mounted) return;
+    final accepted = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Show notification badges'),
+        content: const Text(
+          'See unread notification counts on app icons. '
+          'You will be sent to Android Settings to enable Notification Access.\n\n'
+          'You can skip and enable this later.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Skip'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Enable'),
+          ),
+        ],
+      ),
+    );
+    await prefs.setBool(_kNotifPromptShownKey, true);
+    if (accepted == true) {
+      final opened = await NotificationCountsBridge.openSettings();
+      if (!opened && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Could not open Notification Access settings')),
+        );
+      }
     }
   }
 
@@ -258,15 +492,28 @@ class _LauncherHomeState extends State<LauncherHome>
   }
 
   Future<void> _refreshWithDiff() async {
-    if (_refreshing) return;
+    if (_refreshing) {
+      _refreshPending = true;
+      return;
+    }
     _refreshing = true;
     try {
-      final freshApps = await InstalledApps.getInstalledApps(
-        excludeSystemApps: false,
-        withIcon: true,
-      );
-      freshApps
-          .sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      do {
+        _refreshPending = false;
+        await _runRefreshOnce();
+      } while (_refreshPending && mounted);
+    } finally {
+      _refreshing = false;
+    }
+  }
+
+  Future<void> _runRefreshOnce() async {
+    final freshApps = await InstalledApps.getInstalledApps(
+      excludeSystemApps: false,
+      withIcon: true,
+    );
+    freshApps
+        .sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
 
       final previousPkgs = _apps.map((a) => a.packageName).toSet();
       final currentPkgs = freshApps.map((a) => a.packageName).toSet();
@@ -357,9 +604,6 @@ class _LauncherHomeState extends State<LauncherHome>
         debugPrint(
             'Refresh: ${newlyDeleted.length} newly deleted, $reinstalledRemoved reinstalled');
       }
-    } finally {
-      _refreshing = false;
-    }
   }
 
   Future<void> _launchApp(String packageName) async {
@@ -445,6 +689,7 @@ class _LauncherHomeState extends State<LauncherHome>
               launchLog: _launchLog,
               installedAt: _installedAt,
               protectedPackages: _protectedPackages,
+              notificationCounts: _notifCounts,
               loading: _loading,
               onLaunch: _launchApp,
               onUninstall: _uninstallOne,
@@ -458,6 +703,7 @@ class _LauncherHomeState extends State<LauncherHome>
               launchHistory: lastLaunchMap,
               installedAt: _installedAt,
               protectedPackages: _protectedPackages,
+              notificationCounts: _notifCounts,
               loading: _loading,
               onLaunch: _launchApp,
               onUninstall: _uninstallOne,

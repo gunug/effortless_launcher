@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:installed_apps/installed_apps.dart';
 
 Future<void> showAppContextMenu({
   required BuildContext context,
@@ -56,6 +57,17 @@ Future<void> showAppContextMenu({
           ],
         ),
       ),
+      const PopupMenuItem<String>(
+        value: 'info',
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.info_outline, size: 18),
+            SizedBox(width: 12),
+            Text('App Info'),
+          ],
+        ),
+      ),
     ],
   );
   if (result == null) return;
@@ -68,6 +80,9 @@ Future<void> showAppContextMenu({
       break;
     case 'protect':
       await onToggleProtect(packageName);
+      break;
+    case 'info':
+      InstalledApps.openSettings(packageName);
       break;
   }
 }

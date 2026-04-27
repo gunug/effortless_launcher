@@ -6,6 +6,7 @@ plugins {
     id("kotlin-android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+    id("com.github.triplet.play")
 }
 
 val keystoreProperties = Properties()
@@ -13,6 +14,8 @@ val keystorePropertiesFile = rootProject.file("key.properties")
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
+
+val playCredentialsFile = rootProject.file("../key/effortless-launcher-e202f6c046c1.json")
 
 android {
     namespace = "com.onethelab.effortless_launcher"
@@ -58,4 +61,11 @@ android {
 
 flutter {
     source = "../.."
+}
+
+play {
+    serviceAccountCredentials.set(playCredentialsFile)
+    track.set("internal")
+    defaultToAppBundles.set(true)
+    releaseStatus.set(com.github.triplet.gradle.androidpublisher.ReleaseStatus.DRAFT)
 }

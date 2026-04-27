@@ -54,3 +54,41 @@ dependencies:
 - https://pub.dev/packages/in_app_purchase
 - https://developer.android.com/google/play/billing/integrate
 - https://developer.android.com/google/play/billing/subscriptions (구독 필요 시)
+
+## Play Console 자동 배포 (Gradle Play Publisher)
+
+### 셋업 완료 항목
+- 플러그인: `com.github.triplet.play` 3.12.1 ([android/settings.gradle.kts](android/settings.gradle.kts), [android/app/build.gradle.kts](android/app/build.gradle.kts))
+- Service account 이메일: `play-publisher@effortless-launcher.iam.gserviceaccount.com`
+- Service account 키 파일: `key/effortless-launcher-e202f6c046c1.json` (gitignore됨)
+- GCP 프로젝트: `effortless-launcher` (gunajona85@gmail.com 계정 소속)
+- Play Console 권한: 위 이메일을 "출시 관리자"로 초대 완료
+
+### 배포 명령
+```bash
+# 1. pubspec.yaml의 versionCode (+숫자 부분) 매번 1 증가
+# 2. 빌드 + 업로드 한 번에
+flutter build appbundle --release && cd android && ./gradlew publishReleaseBundle
+```
+
+### 현재 제약: 앱이 "draft" 상태
+- Play Console에서 앱이 production 정식 게시 전이라 모든 API 업로드는 **DRAFT 상태로만** 허용됨
+- `releaseStatus.set(ReleaseStatus.DRAFT)` 로 명시 ([android/app/build.gradle.kts](android/app/build.gradle.kts) play 블록)
+- 업로드 후 **Play Console UI에서 수동으로 "출시 시작" 클릭** 필요
+  - Play Console → 테스트 → 내부 테스트 → 초안 카드의 "출시 검토" → "내부 테스트로 출시 시작"
+
+### Production 정식 게시 후 변경 사항
+- [android/app/build.gradle.kts](android/app/build.gradle.kts) 의 `releaseStatus` 를 `ReleaseStatus.COMPLETED` 로 변경
+- 이후 `./gradlew publishReleaseBundle` 한 번에 자동 배포 완료 (UI 클릭 불필요)
+
+### 자주 만나는 에러
+| 메시지 | 원인 | 해결 |
+|---|---|---|
+| `Only releases with status draft may be created on draft app` | 앱이 draft 상태인데 COMPLETED로 시도 | `releaseStatus.set(DRAFT)` 유지 |
+| `versionCode N has already been used` | pubspec.yaml의 `+숫자` 안 올림 | `+숫자` 1 증가 후 재빌드 |
+| `403 PERMISSION_DENIED` 첫 시도 | Play Console 권한 전파 지연 (~24시간) | 다음 날 재시도 |
+| `Package not found` | 첫 릴리스를 수동 업로드 안 함 | Play Console 웹에서 1회 수동 업로드 후 재시도 |
+
+### 첫 릴리스 (수동 업로드 필요)
+- API 업로드는 Play Console이 앱을 인지한 이후에만 동작
+- 앱 최초 등록 시점의 첫 AAB는 반드시 Play Console 웹에서 직접 업로드해야 함

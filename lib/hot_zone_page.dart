@@ -17,6 +17,7 @@ class HotZonePage extends StatefulWidget {
   final Map<String, List<int>> launchLog;
   final Map<String, int> installedAt;
   final Set<String> protectedPackages;
+  final Map<String, int> notificationCounts;
   final bool loading;
   final Future<void> Function(String packageName) onLaunch;
   final Future<void> Function(String packageName) onUninstall;
@@ -31,6 +32,7 @@ class HotZonePage extends StatefulWidget {
     required this.launchLog,
     required this.installedAt,
     required this.protectedPackages,
+    required this.notificationCounts,
     required this.loading,
     required this.onLaunch,
     required this.onUninstall,
@@ -249,6 +251,8 @@ class _HotZonePageState extends State<HotZonePage> {
                       isProtected:
                           widget.protectedPackages.contains(a.packageName),
                       isNew: isNewApp(widget.installedAt, a.packageName),
+                      notificationCount:
+                          widget.notificationCounts[a.packageName] ?? 0,
                       onTap: () => widget.onLaunch(a.packageName),
                       onLongPress: (pos) => _showContextMenu(pos, a),
                     );
