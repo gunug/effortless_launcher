@@ -60,7 +60,10 @@ dependencies:
 ### 셋업 완료 항목
 - 플러그인: `com.github.triplet.play` 3.12.1 ([android/settings.gradle.kts](android/settings.gradle.kts), [android/app/build.gradle.kts](android/app/build.gradle.kts))
 - Service account 이메일: `play-publisher@effortless-launcher.iam.gserviceaccount.com`
-- Service account 키 파일: `key/effortless-launcher-e202f6c046c1.json` (gitignore됨)
+- Service account 키 파일: `security/effortless-launcher-e202f6c046c1.json` (gitignore됨)
+- 업로드 keystore: `security/effortless-upload.jks` (gitignore됨)
+- 키스토어 비밀번호: `security/key.properties` — `storeFile=../../security/effortless-upload.jks` 상대경로 사용 (gitignore됨)
+- 위 3개 파일은 다른 PC에서 작업 시 직접 옮겨야 하며, `security/` 폴더가 통째로 누락되면 release 빌드/배포 모두 불가
 - GCP 프로젝트: `effortless-launcher` (gunajona85@gmail.com 계정 소속)
 - Play Console 권한: 위 이메일을 "출시 관리자"로 초대 완료
 

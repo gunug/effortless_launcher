@@ -10,12 +10,12 @@ plugins {
 }
 
 val keystoreProperties = Properties()
-val keystorePropertiesFile = rootProject.file("key.properties")
+val keystorePropertiesFile = rootProject.file("../security/key.properties")
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
 
-val playCredentialsFile = rootProject.file("../key/effortless-launcher-e202f6c046c1.json")
+val playCredentialsFile = rootProject.file("../security/effortless-launcher-e202f6c046c1.json")
 
 android {
     namespace = "com.onethelab.effortless_launcher"

@@ -44,12 +44,7 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
-# Android signing — keep secrets out of git
-/android/key.properties
-/android/app/upload-keystore.jks
+# All sensitive credentials (keystore, key.properties, Play Console service account)
+/security/
 *.jks
 *.keystore
-
-# Play Console service account credentials
-/android/play-credentials.json
-/key/
