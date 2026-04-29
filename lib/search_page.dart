@@ -8,7 +8,35 @@ import 'korean_search.dart';
 import 'models.dart';
 
 const int _kMaxResults = 100;
-const int _kMaxRecent = 24;
+const double _kGridPadding = 16;
+const double _kCrossAxisSpacing = 8;
+const double _kMainAxisSpacing = 16;
+const int _kCrossAxisCount = 4;
+
+/// "Frequently Used" / "Recently Used" 헤더 행이 차지하는 대략적 높이.
+/// IconButton 기본 터치영역(48dp) + 상단 패딩(8dp) 기준.
+const double kSectionHeaderHeight = 56;
+
+/// 4열 정사각형 그리드가 주어진 constraints 안에 스크롤 없이 채울 수 있는
+/// 최대 앱 개수. headerHeight: 그리드 위에 함께 들어가는 헤더가 있을 때 차감.
+int maxAppsWithoutScroll(
+  BoxConstraints constraints, {
+  double headerHeight = 0,
+}) {
+  final contentWidth = constraints.maxWidth - 2 * _kGridPadding;
+  final contentHeight =
+      constraints.maxHeight - 2 * _kGridPadding - headerHeight;
+  if (contentWidth <= 0 || contentHeight <= 0) return 0;
+  final cellWidth =
+      (contentWidth - _kCrossAxisSpacing * (_kCrossAxisCount - 1)) /
+          _kCrossAxisCount;
+  if (cellWidth <= 0) return 0;
+  final rows =
+      ((contentHeight + _kMainAxisSpacing) / (cellWidth + _kMainAxisSpacing))
+          .floor();
+  if (rows <= 0) return 0;
+  return rows * _kCrossAxisCount;
+}
 
 class _ScoredApp {
   final IndexedApp app;
@@ -140,8 +168,7 @@ class _SearchPageState extends State<SearchPage> {
       if (ts != null) withTs.add(MapEntry(ts, a));
     }
     withTs.sort((x, y) => y.key.compareTo(x.key));
-    final take = withTs.length < _kMaxRecent ? withTs.length : _kMaxRecent;
-    return withTs.take(take).map((e) => e.value).toList();
+    return withTs.map((e) => e.value).toList();
   }
 
   void _onSearchChanged() {
@@ -195,9 +222,9 @@ class _SearchPageState extends State<SearchPage> {
 
   SliverGridDelegate get _gridDelegate =>
       const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 4,
-        mainAxisSpacing: 16,
-        crossAxisSpacing: 8,
+        crossAxisCount: _kCrossAxisCount,
+        mainAxisSpacing: _kMainAxisSpacing,
+        crossAxisSpacing: _kCrossAxisSpacing,
       );
 
   Future<void> _showContextMenu(Offset position, IndexedApp app) {
@@ -224,7 +251,7 @@ class _SearchPageState extends State<SearchPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Text('Shows up to 24 apps you recently launched from this launcher.'),
+                const Text('Shows the apps you recently launched, as many as fit on one screen.'),
                 const SizedBox(height: 16),
                 Text('Order', style: titleSmall),
                 const SizedBox(height: 6),
@@ -295,106 +322,122 @@ class _SearchPageState extends State<SearchPage> {
     }
 
     final isRecentMode = _searchController.text.trim().isEmpty;
-    return CustomScrollView(
-      slivers: [
-        if (isRecentMode && _exactResults.isNotEmpty)
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
-              child: Row(
-                children: [
-                  const Icon(Icons.history, size: 20),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      'Recently Used',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final List<IndexedApp> exactItems;
+        if (isRecentMode) {
+          final maxItems = maxAppsWithoutScroll(
+            constraints,
+            headerHeight: kSectionHeaderHeight,
+          );
+          exactItems = _exactResults.length > maxItems
+              ? _exactResults.sublist(0, maxItems)
+              : _exactResults;
+        } else {
+          exactItems = _exactResults;
+        }
+        return CustomScrollView(
+          slivers: [
+            if (isRecentMode && exactItems.isNotEmpty)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.history, size: 20),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          'Recently Used',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.help_outline, size: 20),
+                        tooltip: 'Help',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: _showRecentHelp,
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.attach_money, size: 20),
+                        tooltip: 'Support',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: () => showDonationDialog(context),
+                      ),
+                    ],
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.help_outline, size: 20),
-                    tooltip: 'Help',
-                    visualDensity: VisualDensity.compact,
-                    onPressed: _showRecentHelp,
+                ),
+              ),
+            if (exactItems.isNotEmpty)
+              SliverPadding(
+                padding: const EdgeInsets.all(16),
+                sliver: SliverGrid(
+                  gridDelegate: _gridDelegate,
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) {
+                      final a = exactItems[index];
+                      return AppGridTile(
+                        name: a.name,
+                        icon: widget.icons[a.packageName],
+                        isProtected: widget.protectedPackages
+                            .contains(a.packageName),
+                        isNew: isNewApp(widget.installedAt, a.packageName),
+                        notificationCount:
+                            widget.notificationCounts[a.packageName] ?? 0,
+                        onTap: () => widget.onLaunch(a.packageName),
+                        onLongPress: (pos) => _showContextMenu(pos, a),
+                      );
+                    },
+                    childCount: exactItems.length,
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.attach_money, size: 20),
-                    tooltip: 'Support',
-                    visualDensity: VisualDensity.compact,
-                    onPressed: () => showDonationDialog(context),
+                ),
+              ),
+            if (_similarResults.isNotEmpty) ...[
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.auto_awesome, size: 16),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Similar',
+                        style: Theme.of(context).textTheme.labelLarge,
+                      ),
+                      const SizedBox(width: 8),
+                      const Expanded(child: Divider()),
+                    ],
                   ),
-                ],
+                ),
               ),
-            ),
-          ),
-        if (_exactResults.isNotEmpty)
-          SliverPadding(
-            padding: const EdgeInsets.all(16),
-            sliver: SliverGrid(
-              gridDelegate: _gridDelegate,
-              delegate: SliverChildBuilderDelegate(
-                (context, index) {
-                  final a = _exactResults[index];
-                  return AppGridTile(
-                    name: a.name,
-                    icon: widget.icons[a.packageName],
-                    isProtected:
-                        widget.protectedPackages.contains(a.packageName),
-                    isNew: isNewApp(widget.installedAt, a.packageName),
-                    notificationCount:
-                        widget.notificationCounts[a.packageName] ?? 0,
-                    onTap: () => widget.onLaunch(a.packageName),
-                    onLongPress: (pos) => _showContextMenu(pos, a),
-                  );
-                },
-                childCount: _exactResults.length,
-              ),
-            ),
-          ),
-        if (_similarResults.isNotEmpty) ...[
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-              child: Row(
-                children: [
-                  const Icon(Icons.auto_awesome, size: 16),
-                  const SizedBox(width: 6),
-                  Text(
-                    'Similar',
-                    style: Theme.of(context).textTheme.labelLarge,
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                sliver: SliverGrid(
+                  gridDelegate: _gridDelegate,
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) {
+                      final a = _similarResults[index];
+                      return AppGridTile(
+                        name: a.name,
+                        icon: widget.icons[a.packageName],
+                        isProtected: widget.protectedPackages
+                            .contains(a.packageName),
+                        isNew: isNewApp(widget.installedAt, a.packageName),
+                        notificationCount:
+                            widget.notificationCounts[a.packageName] ?? 0,
+                        onTap: () => widget.onLaunch(a.packageName),
+                        onLongPress: (pos) => _showContextMenu(pos, a),
+                        opacity: 0.8,
+                      );
+                    },
+                    childCount: _similarResults.length,
                   ),
-                  const SizedBox(width: 8),
-                  const Expanded(child: Divider()),
-                ],
+                ),
               ),
-            ),
-          ),
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            sliver: SliverGrid(
-              gridDelegate: _gridDelegate,
-              delegate: SliverChildBuilderDelegate(
-                (context, index) {
-                  final a = _similarResults[index];
-                  return AppGridTile(
-                    name: a.name,
-                    icon: widget.icons[a.packageName],
-                    isProtected:
-                        widget.protectedPackages.contains(a.packageName),
-                    isNew: isNewApp(widget.installedAt, a.packageName),
-                    notificationCount:
-                        widget.notificationCounts[a.packageName] ?? 0,
-                    onTap: () => widget.onLaunch(a.packageName),
-                    onLongPress: (pos) => _showContextMenu(pos, a),
-                    opacity: 0.8,
-                  );
-                },
-                childCount: _similarResults.length,
-              ),
-            ),
-          ),
-        ],
-      ],
+            ],
+          ],
+        );
+      },
     );
   }
 }

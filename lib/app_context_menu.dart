@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:installed_apps/installed_apps.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 Future<void> showAppContextMenu({
   required BuildContext context,
@@ -68,6 +69,17 @@ Future<void> showAppContextMenu({
           ],
         ),
       ),
+      const PopupMenuItem<String>(
+        value: 'store',
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.shop_outlined, size: 18),
+            SizedBox(width: 12),
+            Text('Play Store'),
+          ],
+        ),
+      ),
     ],
   );
   if (result == null) return;
@@ -84,5 +96,19 @@ Future<void> showAppContextMenu({
     case 'info':
       InstalledApps.openSettings(packageName);
       break;
+    case 'store':
+      await _openPlayStore(packageName);
+      break;
   }
+}
+
+Future<void> _openPlayStore(String packageName) async {
+  final marketUri = Uri.parse('market://details?id=$packageName');
+  if (await canLaunchUrl(marketUri)) {
+    await launchUrl(marketUri, mode: LaunchMode.externalApplication);
+    return;
+  }
+  final webUri =
+      Uri.parse('https://play.google.com/store/apps/details?id=$packageName');
+  await launchUrl(webUri, mode: LaunchMode.externalApplication);
 }

@@ -8,7 +8,6 @@ import 'donation_dialog.dart';
 import 'models.dart';
 import 'search_page.dart';
 
-const int _kHotZoneLimit = 28;
 const double _kTauMs = 14 * 24 * 60 * 60 * 1000.0;
 
 class HotZonePage extends StatefulWidget {
@@ -109,15 +108,10 @@ class _HotZonePageState extends State<HotZonePage> {
       return x.lastLaunch.compareTo(y.lastLaunch);
     });
 
-    final result = <IndexedApp>[];
-    for (final a in newApps) {
-      if (result.length >= _kHotZoneLimit) break;
-      result.add(a);
-    }
-    for (final s in scored) {
-      if (result.length >= _kHotZoneLimit) break;
-      result.add(s.app);
-    }
+    final result = <IndexedApp>[
+      ...newApps,
+      ...scored.map((s) => s.app),
+    ];
     return List<IndexedApp>.unmodifiable(result);
   }
 
@@ -133,7 +127,7 @@ class _HotZonePageState extends State<HotZonePage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Text('Auto-ranks the top 28 apps launched from this launcher.'),
+                const Text('Auto-ranks the apps that fit on one screen, with no scrolling.'),
                 const SizedBox(height: 16),
                 Text('Ranking rules', style: titleSmall),
                 const SizedBox(height: 6),
@@ -234,27 +228,35 @@ class _HotZonePageState extends State<HotZonePage> {
                     ),
                   ),
                 )
-              : GridView.builder(
-                  padding: const EdgeInsets.all(16),
-                  gridDelegate:
-                      const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 4,
-                    mainAxisSpacing: 16,
-                    crossAxisSpacing: 8,
-                  ),
-                  itemCount: _committed.length,
-                  itemBuilder: (context, index) {
-                    final a = _committed[index];
-                    return AppGridTile(
-                      name: a.name,
-                      icon: widget.icons[a.packageName],
-                      isProtected:
-                          widget.protectedPackages.contains(a.packageName),
-                      isNew: isNewApp(widget.installedAt, a.packageName),
-                      notificationCount:
-                          widget.notificationCounts[a.packageName] ?? 0,
-                      onTap: () => widget.onLaunch(a.packageName),
-                      onLongPress: (pos) => _showContextMenu(pos, a),
+              : LayoutBuilder(
+                  builder: (context, constraints) {
+                    final maxItems = maxAppsWithoutScroll(constraints);
+                    final items = _committed.length > maxItems
+                        ? _committed.sublist(0, maxItems)
+                        : _committed;
+                    return GridView.builder(
+                      padding: const EdgeInsets.all(16),
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 4,
+                        mainAxisSpacing: 16,
+                        crossAxisSpacing: 8,
+                      ),
+                      itemCount: items.length,
+                      itemBuilder: (context, index) {
+                        final a = items[index];
+                        return AppGridTile(
+                          name: a.name,
+                          icon: widget.icons[a.packageName],
+                          isProtected: widget.protectedPackages
+                              .contains(a.packageName),
+                          isNew: isNewApp(widget.installedAt, a.packageName),
+                          notificationCount:
+                              widget.notificationCounts[a.packageName] ?? 0,
+                          onTap: () => widget.onLaunch(a.packageName),
+                          onLongPress: (pos) => _showContextMenu(pos, a),
+                        );
+                      },
                     );
                   },
                 ),
