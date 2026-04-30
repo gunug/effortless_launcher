@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -11,32 +12,95 @@ const int _kMaxResults = 100;
 const double _kGridPadding = 16;
 const double _kCrossAxisSpacing = 8;
 const double _kMainAxisSpacing = 16;
-const int _kCrossAxisCount = 4;
+
+/// 한 셀이 가지는 "이상적인" 세로 길이. 행 수를 floor로 결정할 때 기준이 됨.
+/// 이후 셀 높이는 가용 공간을 행 수로 나눠 빈틈없이 채우도록 재계산.
+const double _kPreferredCellHeight = 110;
+
+/// 셀 가로/세로에서 아이콘 영역을 잡을 때 빼주는 여유 — 아이콘 아래 텍스트 2줄
+/// (~28dp) + 간격(6dp) 확보용.
+const double _kIconBottomReserve = 36;
+const double _kIconHorizontalReserve = 8;
+const double _kMinIconSize = 36;
 
 /// "Frequently Used" / "Recently Used" 헤더 행이 차지하는 대략적 높이.
 /// IconButton 기본 터치영역(48dp) + 상단 패딩(8dp) 기준.
 const double kSectionHeaderHeight = 56;
 
-/// 4열 정사각형 그리드를 주어진 constraints 안에 채울 행 수를 올림으로 계산해
-/// 마지막 줄이 화면을 살짝 넘치더라도 한 줄을 더 표시하는 최대 앱 개수.
-/// headerHeight: 그리드 위에 함께 들어가는 헤더가 있을 때 차감.
-int maxAppsWithoutScroll(
+/// 화면 너비에 따라 한 줄 열 개수를 결정. 폰=4 / 폴더블·작은 태블릿=6 / 태블릿=8.
+int columnCountFor(double width) {
+  if (width >= 900) return 8;
+  if (width >= 600) return 6;
+  return 4;
+}
+
+/// 그리드 레이아웃 계산 결과. 가용 공간을 floor 행 수로 나눠 빈틈 없이 채우는
+/// 셀 크기와, 그 셀에 비례한 아이콘 크기를 함께 반환.
+class GridLayout {
+  final int crossAxisCount;
+  final int rowCount;
+  final int maxItems;
+  final double cellWidth;
+  final double cellHeight;
+  final double iconSize;
+
+  const GridLayout({
+    required this.crossAxisCount,
+    required this.rowCount,
+    required this.maxItems,
+    required this.cellWidth,
+    required this.cellHeight,
+    required this.iconSize,
+  });
+}
+
+GridLayout computeGridLayout(
   BoxConstraints constraints, {
   double headerHeight = 0,
 }) {
-  final contentWidth = constraints.maxWidth - 2 * _kGridPadding;
+  final width = constraints.maxWidth;
+  final crossAxisCount = columnCountFor(width);
+  final contentWidth = width - 2 * _kGridPadding;
   final contentHeight =
       constraints.maxHeight - 2 * _kGridPadding - headerHeight;
-  if (contentWidth <= 0 || contentHeight <= 0) return 0;
+
+  if (contentWidth <= 0 || contentHeight <= 0) {
+    return GridLayout(
+      crossAxisCount: crossAxisCount,
+      rowCount: 0,
+      maxItems: 0,
+      cellWidth: 1,
+      cellHeight: 1,
+      iconSize: _kMinIconSize,
+    );
+  }
+
   final cellWidth =
-      (contentWidth - _kCrossAxisSpacing * (_kCrossAxisCount - 1)) /
-          _kCrossAxisCount;
-  if (cellWidth <= 0) return 0;
-  final rows =
-      ((contentHeight + _kMainAxisSpacing) / (cellWidth + _kMainAxisSpacing))
-          .ceil();
-  if (rows <= 0) return 0;
-  return rows * _kCrossAxisCount;
+      (contentWidth - _kCrossAxisSpacing * (crossAxisCount - 1)) /
+          crossAxisCount;
+
+  final rawRows = ((contentHeight + _kMainAxisSpacing) /
+          (_kPreferredCellHeight + _kMainAxisSpacing))
+      .floor();
+  final rowCount = rawRows < 1 ? 1 : rawRows;
+
+  final cellHeight =
+      (contentHeight - _kMainAxisSpacing * (rowCount - 1)) / rowCount;
+
+  final iconRaw = math.min(
+    cellWidth - _kIconHorizontalReserve,
+    cellHeight - _kIconBottomReserve,
+  );
+  final iconSize = iconRaw < _kMinIconSize ? _kMinIconSize : iconRaw;
+
+  return GridLayout(
+    crossAxisCount: crossAxisCount,
+    rowCount: rowCount,
+    maxItems: rowCount * crossAxisCount,
+    cellWidth: cellWidth > 0 ? cellWidth : 1,
+    cellHeight: cellHeight > 0 ? cellHeight : 1,
+    iconSize: iconSize,
+  );
 }
 
 class _ScoredApp {
@@ -221,11 +285,12 @@ class _SearchPageState extends State<SearchPage> {
     });
   }
 
-  SliverGridDelegate get _gridDelegate =>
-      const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: _kCrossAxisCount,
+  SliverGridDelegate _gridDelegateFor(GridLayout layout) =>
+      SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: layout.crossAxisCount,
         mainAxisSpacing: _kMainAxisSpacing,
         crossAxisSpacing: _kCrossAxisSpacing,
+        mainAxisExtent: layout.cellHeight,
       );
 
   Future<void> _showContextMenu(Offset position, IndexedApp app) {
@@ -325,14 +390,14 @@ class _SearchPageState extends State<SearchPage> {
     final isRecentMode = _searchController.text.trim().isEmpty;
     return LayoutBuilder(
       builder: (context, constraints) {
+        final layout = computeGridLayout(
+          constraints,
+          headerHeight: isRecentMode ? kSectionHeaderHeight : 0,
+        );
         final List<IndexedApp> exactItems;
         if (isRecentMode) {
-          final maxItems = maxAppsWithoutScroll(
-            constraints,
-            headerHeight: kSectionHeaderHeight,
-          );
-          exactItems = _exactResults.length > maxItems
-              ? _exactResults.sublist(0, maxItems)
+          exactItems = _exactResults.length > layout.maxItems
+              ? _exactResults.sublist(0, layout.maxItems)
               : _exactResults;
         } else {
           exactItems = _exactResults;
@@ -373,13 +438,14 @@ class _SearchPageState extends State<SearchPage> {
               SliverPadding(
                 padding: const EdgeInsets.all(16),
                 sliver: SliverGrid(
-                  gridDelegate: _gridDelegate,
+                  gridDelegate: _gridDelegateFor(layout),
                   delegate: SliverChildBuilderDelegate(
                     (context, index) {
                       final a = exactItems[index];
                       return AppGridTile(
                         name: a.name,
                         icon: widget.icons[a.packageName],
+                        iconSize: layout.iconSize,
                         isProtected: widget.protectedPackages
                             .contains(a.packageName),
                         isNew: isNewApp(widget.installedAt, a.packageName),
@@ -414,13 +480,14 @@ class _SearchPageState extends State<SearchPage> {
               SliverPadding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                 sliver: SliverGrid(
-                  gridDelegate: _gridDelegate,
+                  gridDelegate: _gridDelegateFor(layout),
                   delegate: SliverChildBuilderDelegate(
                     (context, index) {
                       final a = _similarResults[index];
                       return AppGridTile(
                         name: a.name,
                         icon: widget.icons[a.packageName],
+                        iconSize: layout.iconSize,
                         isProtected: widget.protectedPackages
                             .contains(a.packageName),
                         isNew: isNewApp(widget.installedAt, a.packageName),
@@ -446,6 +513,7 @@ class _SearchPageState extends State<SearchPage> {
 class AppGridTile extends StatefulWidget {
   final String name;
   final Uint8List? icon;
+  final double iconSize;
   final bool isProtected;
   final bool isNew;
   final int notificationCount;
@@ -458,6 +526,7 @@ class AppGridTile extends StatefulWidget {
     required this.name,
     required this.icon,
     required this.onTap,
+    this.iconSize = 48,
     this.isProtected = false,
     this.isNew = false,
     this.notificationCount = 0,
@@ -475,16 +544,18 @@ class _AppGridTileState extends State<AppGridTile> {
   @override
   Widget build(BuildContext context) {
     final bytes = widget.icon;
+    final size = widget.iconSize;
     final iconBox = SizedBox(
-      width: 48,
-      height: 48,
+      width: size,
+      height: size,
       child: Stack(
         clipBehavior: Clip.none,
         children: [
           Positioned.fill(
             child: bytes != null
-                ? Image.memory(bytes, width: 48, height: 48, gaplessPlayback: true)
-                : const Icon(Icons.android, size: 48),
+                ? Image.memory(bytes,
+                    width: size, height: size, gaplessPlayback: true)
+                : Icon(Icons.android, size: size),
           ),
           if (widget.isProtected)
             Positioned(

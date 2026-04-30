@@ -230,17 +230,17 @@ class _HotZonePageState extends State<HotZonePage> {
                 )
               : LayoutBuilder(
                   builder: (context, constraints) {
-                    final maxItems = maxAppsWithoutScroll(constraints);
-                    final items = _committed.length > maxItems
-                        ? _committed.sublist(0, maxItems)
+                    final layout = computeGridLayout(constraints);
+                    final items = _committed.length > layout.maxItems
+                        ? _committed.sublist(0, layout.maxItems)
                         : _committed;
                     return GridView.builder(
                       padding: const EdgeInsets.all(16),
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 4,
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: layout.crossAxisCount,
                         mainAxisSpacing: 16,
                         crossAxisSpacing: 8,
+                        mainAxisExtent: layout.cellHeight,
                       ),
                       itemCount: items.length,
                       itemBuilder: (context, index) {
@@ -248,6 +248,7 @@ class _HotZonePageState extends State<HotZonePage> {
                         return AppGridTile(
                           name: a.name,
                           icon: widget.icons[a.packageName],
+                          iconSize: layout.iconSize,
                           isProtected: widget.protectedPackages
                               .contains(a.packageName),
                           isNew: isNewApp(widget.installedAt, a.packageName),
