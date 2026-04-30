@@ -74,6 +74,15 @@ dependencies:
 flutter build appbundle --release && cd android && ./gradlew publishReleaseBundle
 ```
 
+### JAVA_HOME 필요 (gradle 직접 호출 시)
+- `flutter build` 는 자체 JDK 탐색으로 동작하지만 `./gradlew publishReleaseBundle` 은 `JAVA_HOME` 미설정 시 `ERROR: JAVA_HOME is not set` 으로 실패
+- 시스템 환경변수에 영구 설정하거나, 배포 셸에서 한 번 export:
+```bash
+export JAVA_HOME="/c/Program Files/Android/Android Studio/jbr"
+export PATH="$JAVA_HOME/bin:$PATH"
+```
+- `flutter doctor -v` 가 보고하는 "Java binary at" 경로의 상위 디렉터리(`jbr/`)를 그대로 사용
+
 ### 현재 제약: 앱이 "draft" 상태
 - Play Console에서 앱이 production 정식 게시 전이라 모든 API 업로드는 **DRAFT 상태로만** 허용됨
 - `releaseStatus.set(ReleaseStatus.DRAFT)` 로 명시 ([android/app/build.gradle.kts](android/app/build.gradle.kts) play 블록)
@@ -91,6 +100,7 @@ flutter build appbundle --release && cd android && ./gradlew publishReleaseBundl
 | `versionCode N has already been used` | pubspec.yaml의 `+숫자` 안 올림 | `+숫자` 1 증가 후 재빌드 |
 | `403 PERMISSION_DENIED` 첫 시도 | Play Console 권한 전파 지연 (~24시간) | 다음 날 재시도 |
 | `Package not found` | 첫 릴리스를 수동 업로드 안 함 | Play Console 웹에서 1회 수동 업로드 후 재시도 |
+| `JAVA_HOME is not set and no 'java' command could be found` | gradle 호출 시 JDK 경로 미설정 | 위 "JAVA_HOME 필요" 섹션 참고 |
 
 ### 첫 릴리스 (수동 업로드 필요)
 - API 업로드는 Play Console이 앱을 인지한 이후에만 동작
