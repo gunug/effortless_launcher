@@ -17,8 +17,9 @@ const int _kCrossAxisCount = 4;
 /// IconButton 기본 터치영역(48dp) + 상단 패딩(8dp) 기준.
 const double kSectionHeaderHeight = 56;
 
-/// 4열 정사각형 그리드가 주어진 constraints 안에 스크롤 없이 채울 수 있는
-/// 최대 앱 개수. headerHeight: 그리드 위에 함께 들어가는 헤더가 있을 때 차감.
+/// 4열 정사각형 그리드를 주어진 constraints 안에 채울 행 수를 올림으로 계산해
+/// 마지막 줄이 화면을 살짝 넘치더라도 한 줄을 더 표시하는 최대 앱 개수.
+/// headerHeight: 그리드 위에 함께 들어가는 헤더가 있을 때 차감.
 int maxAppsWithoutScroll(
   BoxConstraints constraints, {
   double headerHeight = 0,
@@ -33,7 +34,7 @@ int maxAppsWithoutScroll(
   if (cellWidth <= 0) return 0;
   final rows =
       ((contentHeight + _kMainAxisSpacing) / (cellWidth + _kMainAxisSpacing))
-          .floor();
+          .ceil();
   if (rows <= 0) return 0;
   return rows * _kCrossAxisCount;
 }
