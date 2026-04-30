@@ -21,17 +21,31 @@ const double _kPreferredCellHeight = 110;
 /// (~28dp) + 간격(6dp) 확보용.
 const double _kIconBottomReserve = 36;
 const double _kIconHorizontalReserve = 8;
-const double _kMinIconSize = 36;
+const double _kMinIconSize = 40;
+/// 셀이 커져도 아이콘은 이 값을 넘지 않도록 캡 — 너무 큰 아이콘이 시각적으로
+/// 어색해지는 것을 방지. (Material 표준 아이콘은 48~64dp 범위)
+const double _kMaxIconSize = 64;
 
 /// "Frequently Used" / "Recently Used" 헤더 행이 차지하는 대략적 높이.
 /// IconButton 기본 터치영역(48dp) + 상단 패딩(8dp) 기준.
 const double kSectionHeaderHeight = 56;
 
-/// 화면 너비에 따라 한 줄 열 개수를 결정. 폰=4 / 폴더블·작은 태블릿=6 / 태블릿=8.
+/// 셀 너비 상한. 이 값을 넘기 직전에 다음 열 개수로 전환되어 톱니파 진폭을
+/// 작게 유지함.
+const double _kMaxCellWidth = 110;
+const int _kMinColumns = 4;
+const int _kMaxColumns = 8;
+
+/// 화면 너비에 따라 한 줄 열 개수를 결정. 셀 너비가 [_kMaxCellWidth] 를
+/// 넘기 직전에 한 열을 추가하는 방식이라 폰(4) → 큰 폰(5) → 폴더블(6) →
+/// 작은 태블릿(7) → 태블릿(8) 순으로 부드럽게 변함.
 int columnCountFor(double width) {
-  if (width >= 900) return 8;
-  if (width >= 600) return 6;
-  return 4;
+  for (int cols = _kMinColumns; cols <= _kMaxColumns; cols++) {
+    final cellWidth =
+        (width - 2 * _kGridPadding - _kCrossAxisSpacing * (cols - 1)) / cols;
+    if (cellWidth <= _kMaxCellWidth) return cols;
+  }
+  return _kMaxColumns;
 }
 
 /// 그리드 레이아웃 계산 결과. 가용 공간을 floor 행 수로 나눠 빈틈 없이 채우는
@@ -91,7 +105,7 @@ GridLayout computeGridLayout(
     cellWidth - _kIconHorizontalReserve,
     cellHeight - _kIconBottomReserve,
   );
-  final iconSize = iconRaw < _kMinIconSize ? _kMinIconSize : iconRaw;
+  final iconSize = iconRaw.clamp(_kMinIconSize, _kMaxIconSize);
 
   return GridLayout(
     crossAxisCount: crossAxisCount,
