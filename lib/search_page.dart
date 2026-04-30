@@ -15,7 +15,7 @@ const double _kMainAxisSpacing = 16;
 
 /// 한 셀이 가지는 "이상적인" 세로 길이. 행 수를 floor로 결정할 때 기준이 됨.
 /// 이후 셀 높이는 가용 공간을 행 수로 나눠 빈틈없이 채우도록 재계산.
-const double _kPreferredCellHeight = 110;
+const double _kPreferredCellHeight = 95;
 
 /// 셀 가로/세로에서 아이콘 영역을 잡을 때 빼주는 여유 — 아이콘 아래 텍스트 2줄
 /// (~28dp) + 간격(6dp) 확보용.
