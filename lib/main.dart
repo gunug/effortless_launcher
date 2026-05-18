@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -9,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app_cache.dart';
 import 'deleted_apps_page.dart';
+import 'donation_iap.dart';
 import 'hot_zone_page.dart';
 import 'models.dart';
 import 'notification_counts.dart';
@@ -21,6 +21,7 @@ const String _kLegacyLaunchHistoryKey = 'launch_history';
 const String _kProtectedKey = 'protected_apps_v1';
 const String _kLastPageKey = 'last_page_index_v1';
 const String _kInstalledAtKey = 'installed_at_v1';
+const String _kHiddenRecentKey = 'hidden_recent_v1';
 const String _kWarmupStateKey = 'warmup_state_v1';
 const String _kNotifPromptShownKey = 'notif_prompt_shown_v1';
 const int _kDeletedRecordTtlMs = 365 * 24 * 60 * 60 * 1000;
@@ -63,6 +64,8 @@ String _warmupStateToString(_WarmupState s) {
 }
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  DonationPurchaseHandler.instance.start();
   runApp(const EffortlessLauncherApp());
 }
 
@@ -103,6 +106,7 @@ class _LauncherHomeState extends State<LauncherHome>
   Map<String, int> _installedAt = {};
   List<DeletedApp> _deletedApps = [];
   Set<String> _protectedPackages = {};
+  Set<String> _hiddenRecent = {};
   bool _loading = true;
   bool _refreshing = false;
   bool _refreshPending = false;
@@ -179,6 +183,7 @@ class _LauncherHomeState extends State<LauncherHome>
     await _loadLaunchLog();
     await _loadProtected();
     await _loadInstalledAt();
+    await _loadHiddenRecent();
     await _loadWarmupState();
     _deletedApps = await AppCache.loadDeletedApps();
     _purgeExpiredDeletedRecords();
@@ -432,6 +437,24 @@ class _LauncherHomeState extends State<LauncherHome>
     await prefs.setString(_kInstalledAtKey, json.encode(_installedAt));
   }
 
+  Future<void> _loadHiddenRecent() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_kHiddenRecentKey);
+    if (raw == null || raw.isEmpty) return;
+    try {
+      final list = json.decode(raw) as List;
+      _hiddenRecent = list.map((e) => e as String).toSet();
+    } catch (_) {
+      _hiddenRecent = {};
+    }
+  }
+
+  Future<void> _saveHiddenRecent() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+        _kHiddenRecentKey, json.encode(_hiddenRecent.toList()));
+  }
+
   void _purgeExpiredDeletedRecords() {
     final cutoff = DateTime.now().millisecondsSinceEpoch - _kDeletedRecordTtlMs;
     final before = _deletedApps.length;
@@ -539,6 +562,12 @@ class _LauncherHomeState extends State<LauncherHome>
         unawaited(_saveInstalledAt());
       }
 
+      final hiddenBefore = _hiddenRecent.length;
+      _hiddenRecent.removeWhere((pkg) => !currentPkgs.contains(pkg));
+      if (_hiddenRecent.length != hiddenBefore) {
+        unawaited(_saveHiddenRecent());
+      }
+
       if (newlyDeleted.isNotEmpty && _apps.isNotEmpty) {
         final now = DateTime.now().millisecondsSinceEpoch;
         final oldByPkg = {for (final a in _apps) a.packageName: a};
@@ -613,8 +642,10 @@ class _LauncherHomeState extends State<LauncherHome>
     if (existing.length > _kMaxLaunchesPerApp) {
       _launchLog[packageName] = existing.sublist(0, _kMaxLaunchesPerApp);
     }
+    final wasHidden = _hiddenRecent.remove(packageName);
     setState(() {});
     unawaited(_saveLaunchLog());
+    if (wasHidden) unawaited(_saveHiddenRecent());
     await InstalledApps.startApp(packageName);
   }
 
@@ -632,11 +663,15 @@ class _LauncherHomeState extends State<LauncherHome>
   }
 
   Future<void> _removeFromRecent(String packageName) async {
-    if (!_launchLog.containsKey(packageName)) return;
+    final hadLog = _launchLog.containsKey(packageName);
+    final alreadyHidden = _hiddenRecent.contains(packageName);
+    if (!hadLog && alreadyHidden) return;
     setState(() {
       _launchLog.remove(packageName);
+      _hiddenRecent.add(packageName);
     });
-    await _saveLaunchLog();
+    if (hadLog) await _saveLaunchLog();
+    if (!alreadyHidden) await _saveHiddenRecent();
   }
 
   Future<void> _toggleProtect(String packageName) async {
@@ -689,6 +724,7 @@ class _LauncherHomeState extends State<LauncherHome>
               launchLog: _launchLog,
               installedAt: _installedAt,
               protectedPackages: _protectedPackages,
+              hiddenRecent: _hiddenRecent,
               notificationCounts: _notifCounts,
               loading: _loading,
               onLaunch: _launchApp,

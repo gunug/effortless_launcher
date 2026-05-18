@@ -4,6 +4,7 @@
         tools:ignore="QueryAllPackagesPermission"/>
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions"/>
+    <uses-permission android:name="com.android.vending.BILLING" />
     <application
         android:label="Effortless Launcher"
         android:name="${applicationName}"

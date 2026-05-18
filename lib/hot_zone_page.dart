@@ -16,6 +16,7 @@ class HotZonePage extends StatefulWidget {
   final Map<String, List<int>> launchLog;
   final Map<String, int> installedAt;
   final Set<String> protectedPackages;
+  final Set<String> hiddenRecent;
   final Map<String, int> notificationCounts;
   final bool loading;
   final Future<void> Function(String packageName) onLaunch;
@@ -31,6 +32,7 @@ class HotZonePage extends StatefulWidget {
     required this.launchLog,
     required this.installedAt,
     required this.protectedPackages,
+    required this.hiddenRecent,
     required this.notificationCounts,
     required this.loading,
     required this.onLaunch,
@@ -78,6 +80,7 @@ class _HotZonePageState extends State<HotZonePage> {
     final newApps = <IndexedApp>[];
     final scored = <_Scored>[];
     for (final a in widget.apps) {
+      if (widget.hiddenRecent.contains(a.packageName)) continue;
       final installTs = widget.installedAt[a.packageName];
       final isNew = installTs != null && installTs > 0 && installTs >= newCutoff;
       if (isNew) {
